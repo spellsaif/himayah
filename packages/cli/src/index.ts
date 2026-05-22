@@ -418,9 +418,8 @@ export default app;
   }
 }
 
-if (require.main === module) {
-  main().catch((err) => {
-    console.error(red("Error initiating Himayah CLI setup:"), err);
-    process.exit(1);
-  });
-}
+main().catch((err) => {
+  console.error(red("Error initiating Himayah CLI setup:"), err);
+  process.exit(1);
+});
+
