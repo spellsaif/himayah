@@ -1,0 +1,11 @@
+// @ts-nocheck -- skip type checking
+import * as docs_6 from "../content/docs/security-audit.mdx?collection=docs&hash=1779445113500"
+import * as docs_5 from "../content/docs/rate-limiting.mdx?collection=docs&hash=1779445113500"
+import * as docs_4 from "../content/docs/plugins.mdx?collection=docs&hash=1779445113500"
+import * as docs_3 from "../content/docs/index.mdx?collection=docs&hash=1779445113500"
+import * as docs_2 from "../content/docs/getting-started.mdx?collection=docs&hash=1779445113500"
+import * as docs_1 from "../content/docs/architecture.mdx?collection=docs&hash=1779445113500"
+import * as docs_0 from "../content/docs/adapters.mdx?collection=docs&hash=1779445113500"
+import { _runtime } from "fumadocs-mdx"
+import * as _source from "../source.config"
+export const docs = _runtime.docs<typeof _source.docs>([{ info: {"path":"adapters.mdx","absolutePath":"C:/Users/saif/.gemini/antigravity/scratch/himayah/apps/docs/content/docs/adapters.mdx"}, data: docs_0 }, { info: {"path":"architecture.mdx","absolutePath":"C:/Users/saif/.gemini/antigravity/scratch/himayah/apps/docs/content/docs/architecture.mdx"}, data: docs_1 }, { info: {"path":"getting-started.mdx","absolutePath":"C:/Users/saif/.gemini/antigravity/scratch/himayah/apps/docs/content/docs/getting-started.mdx"}, data: docs_2 }, { info: {"path":"index.mdx","absolutePath":"C:/Users/saif/.gemini/antigravity/scratch/himayah/apps/docs/content/docs/index.mdx"}, data: docs_3 }, { info: {"path":"plugins.mdx","absolutePath":"C:/Users/saif/.gemini/antigravity/scratch/himayah/apps/docs/content/docs/plugins.mdx"}, data: docs_4 }, { info: {"path":"rate-limiting.mdx","absolutePath":"C:/Users/saif/.gemini/antigravity/scratch/himayah/apps/docs/content/docs/rate-limiting.mdx"}, data: docs_5 }, { info: {"path":"security-audit.mdx","absolutePath":"C:/Users/saif/.gemini/antigravity/scratch/himayah/apps/docs/content/docs/security-audit.mdx"}, data: docs_6 }], [{"info":{"path":"meta.json","absolutePath":"C:/Users/saif/.gemini/antigravity/scratch/himayah/apps/docs/content/docs/meta.json"},"data":{"title":"Documentation","pages":["index","getting-started","architecture","---Plugins","plugins","---Database","adapters","rate-limiting","---Security","security-audit"]}}])

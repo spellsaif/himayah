@@ -1,0 +1,539 @@
+---
+title: Database Adapters
+description: Connect Himayah to your existing database schema using official adapters for Drizzle ORM, Prisma, and Kysely.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+
+# Database Adapters
+
+Himayah is **completely database-agnostic**. It never manages migrations or owns your schema. Instead, you define your tables and provide them to a thin adapter that maps them to Himayah's internal interface.
+
+<Callout type="info">
+  The adapter interface `HimayahAdapter` is a plain TypeScript type. You can write a custom adapter for any database — MongoDB, Supabase, DynamoDB, EdgeDB — as long as you implement the required methods.
+</Callout>
+
+---
+
+## Drizzle ORM
+
+**Package:** `@himayah/adapter-drizzle`
+
+Works with any Drizzle-supported database: PostgreSQL, MySQL, SQLite (including libSQL / Turso).
+
+### Installation
+
+```bash
+pnpm add @himayah/adapter-drizzle
+```
+
+### Setup
+
+#### Option A: Programmatic Schemas (Recommended)
+
+Instead of writing 150+ lines of database schemas manually, you can use Himayah's dialect-specific programmatic schema builders to dynamically generate your tables in one line.
+
+<Tabs items={['PostgreSQL', 'SQLite / Turso', 'MySQL']}>
+  <Tab value="PostgreSQL">
+    ```ts title="schema.ts"
+    import { pgTable } from "drizzle-orm/pg-core";
+    import { createPGSchemas } from "@himayah/adapter-drizzle";
+
+    // Instantly generates users, sessions, passwords, accounts, orgs, rateLimits, etc.
+    export const authSchemas = createPGSchemas(pgTable);
+
+    export const {
+      users,
+      sessions,
+      passwords,
+      verificationTokens,
+      accounts,
+      orgs,
+      members,
+      invitations,
+      rateLimits,
+    } = authSchemas;
+    ```
+  </Tab>
+  <Tab value="SQLite / Turso">
+    ```ts title="schema.ts"
+    import { sqliteTable } from "drizzle-orm/sqlite-core";
+    import { createSQLiteSchemas } from "@himayah/adapter-drizzle";
+
+    export const authSchemas = createSQLiteSchemas(sqliteTable);
+
+    export const {
+      users,
+      sessions,
+      passwords,
+      verificationTokens,
+      accounts,
+      orgs,
+      members,
+      invitations,
+      rateLimits,
+    } = authSchemas;
+    ```
+  </Tab>
+  <Tab value="MySQL">
+    ```ts title="schema.ts"
+    import { mysqlTable } from "drizzle-orm/mysql-core";
+    import { createMySQLSchemas } from "@himayah/adapter-drizzle";
+
+    export const authSchemas = createMySQLSchemas(mysqlTable);
+
+    export const {
+      users,
+      sessions,
+      passwords,
+      verificationTokens,
+      accounts,
+      orgs,
+      members,
+      invitations,
+      rateLimits,
+    } = authSchemas;
+    ```
+  </Tab>
+</Tabs>
+
+#### Option B: Manual Schemas
+
+If you need full customization over column types, names, or indexing structures, map your manual schema tables directly to the `drizzleAdapter`:
+
+```ts title="lib/auth.ts"
+import { drizzleAdapter } from "@himayah/adapter-drizzle";
+import { db } from "./db";
+import {
+  users,
+  accounts,
+  sessions,
+  verificationTokens,
+  orgs,
+  members,
+  invitations,
+  rateLimits,
+} from "./schema";
+
+const adapter = drizzleAdapter(db, {
+  users,              // Required — core user table
+
+  // Optional — include based on which plugins you use:
+  accounts,           // Required for OAuth plugin
+  sessions,           // Required for stateful database sessions
+  verificationTokens, // Required for magic link and OTP plugins
+  orgs,               // Required for organization plugin
+  members,            // Required for organization plugin
+  invitations,        // Required for organization plugin
+  rateLimits,         // Required for database rate limiting
+});
+```
+
+### Manual Schema Reference
+
+<Tabs items={['PostgreSQL', 'SQLite / Turso', 'MySQL']}>
+  <Tab value="PostgreSQL">
+    ```ts title="schema.ts"
+    import { pgTable, text, timestamp, integer } from "drizzle-orm/pg-core";
+
+    export const users = pgTable("users", {
+      id:        text("id").primaryKey(),
+      email:     text("email").notNull().unique(),
+      name:      text("name"),
+      image:     text("image"),
+      createdAt: timestamp("created_at").notNull().defaultNow(),
+      updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    });
+
+    export const accounts = pgTable("accounts", {
+      id:                text("id").primaryKey(),
+      userId:            text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      provider:          text("provider").notNull(),
+      providerAccountId: text("provider_account_id").notNull(),
+      accessToken:       text("access_token"),
+      refreshToken:      text("refresh_token"),
+    });
+
+    export const sessions = pgTable("sessions", {
+      id:        text("id").primaryKey(),
+      userId:    text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      expiresAt: timestamp("expires_at").notNull(),
+      createdAt: timestamp("created_at").notNull().defaultNow(),
+    });
+
+    export const verificationTokens = pgTable("verification_tokens", {
+      id:         text("id").primaryKey(),
+      identifier: text("identifier").notNull(),
+      token:      text("token").notNull(),
+      expiresAt:  timestamp("expires_at").notNull(),
+      createdAt:  timestamp("created_at").notNull().defaultNow(),
+    });
+
+    export const passwords = pgTable("passwords", {
+      userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+      hash:   text("hash").notNull(),
+    });
+
+    export const orgs = pgTable("orgs", {
+      id:        text("id").primaryKey(),
+      name:      text("name").notNull(),
+      slug:      text("slug").notNull().unique(),
+      createdAt: timestamp("created_at").notNull().defaultNow(),
+    });
+
+    export const members = pgTable("members", {
+      id:     text("id").primaryKey(),
+      orgId:  text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+      userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      role:   text("role").notNull().default("member"),
+    });
+
+    export const invitations = pgTable("invitations", {
+      id:          text("id").primaryKey(),
+      orgId:       text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+      email:       text("email").notNull(),
+      role:        text("role").notNull().default("member"),
+      token:       text("token").notNull(),
+      expiresAt:   timestamp("expires_at").notNull(),
+      invitedById: text("invited_by_id").references(() => users.id),
+    });
+
+    export const rateLimits = pgTable("rate_limits", {
+      key:       text("key").primaryKey(),
+      count:     integer("count").notNull(),
+      expiresAt: timestamp("expires_at").notNull(),
+    });
+    ```
+  </Tab>
+  <Tab value="SQLite / Turso">
+    ```ts title="schema.ts"
+    import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+
+    export const users = sqliteTable("users", {
+      id:        text("id").primaryKey(),
+      email:     text("email").notNull().unique(),
+      name:      text("name"),
+      image:     text("image"),
+      createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+      updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+    });
+
+    export const accounts = sqliteTable("accounts", {
+      id:                text("id").primaryKey(),
+      userId:            text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      provider:          text("provider").notNull(),
+      providerAccountId: text("provider_account_id").notNull(),
+      accessToken:       text("access_token"),
+      refreshToken:      text("refresh_token"),
+    });
+
+    export const verificationTokens = sqliteTable("verification_tokens", {
+      id:         text("id").primaryKey(),
+      identifier: text("identifier").notNull(),
+      token:      text("token").notNull(),
+      expiresAt:  integer("expires_at", { mode: "timestamp" }).notNull(),
+      createdAt:  integer("created_at", { mode: "timestamp" }).notNull(),
+    });
+
+    export const rateLimits = sqliteTable("rate_limits", {
+      key:       text("key").primaryKey(),
+      count:     integer("count").notNull(),
+      expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    });
+    ```
+  </Tab>
+  <Tab value="MySQL">
+    ```ts title="schema.ts"
+    import { mysqlTable, varchar, datetime, int } from "drizzle-orm/mysql-core";
+
+    export const users = mysqlTable("users", {
+      id:        varchar("id", { length: 255 }).primaryKey(),
+      email:     varchar("email", { length: 255 }).notNull().unique(),
+      name:      varchar("name", { length: 255 }),
+      image:     varchar("image", { length: 500 }),
+      createdAt: datetime("created_at").notNull(),
+      updatedAt: datetime("updated_at").notNull(),
+    });
+
+    export const rateLimits = mysqlTable("rate_limits", {
+      key:       varchar("key", { length: 500 }).primaryKey(),
+      count:     int("count").notNull(),
+      expiresAt: datetime("expires_at").notNull(),
+    });
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Prisma
+
+**Package:** `@himayah/adapter-prisma`
+
+Works with any Prisma-supported database. Model names are configurable if your schema uses different naming.
+
+### Installation
+
+```bash
+pnpm add @himayah/adapter-prisma
+```
+
+### Setup
+
+```ts title="lib/auth.ts"
+import { PrismaClient } from "@prisma/client";
+import { prismaAdapter } from "@himayah/adapter-prisma";
+
+const prisma = new PrismaClient();
+
+const adapter = prismaAdapter(prisma, {
+  // Map Himayah's model names to your Prisma model names
+  // All values below are the defaults — omit any you don't need to override
+  modelNames: {
+    user:              "user",
+    session:           "session",
+    account:           "account",
+    verificationToken: "verificationToken",
+    org:               "org",
+    member:            "member",
+    invitation:        "invitation",
+    rateLimit:         "rateLimit",
+  },
+});
+```
+
+### Prisma Schema
+
+```prisma title="schema.prisma"
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                 String       @id @default(cuid())
+  email              String       @unique
+  name               String?
+  image              String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  accounts           Account[]
+  sessions           Session[]
+  password           Password?
+  memberships        Member[]
+  sentInvitations    Invitation[] @relation("InvitedBy")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  accessToken       String?
+  refreshToken      String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  id         String   @id @default(cuid())
+  identifier String
+  token      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+}
+
+model Password {
+  userId String @id
+  hash   String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Org {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  createdAt   DateTime     @default(now())
+  members     Member[]
+  invitations Invitation[]
+}
+
+model Member {
+  id     String @id @default(cuid())
+  orgId  String
+  userId String
+  role   String @default("member")
+  org    Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Invitation {
+  id          String   @id @default(cuid())
+  orgId       String
+  email       String
+  role        String   @default("member")
+  token       String
+  expiresAt   DateTime
+  invitedById String?
+  org         Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invitedBy   User?    @relation("InvitedBy", fields: [invitedById], references: [id])
+}
+
+model RateLimit {
+  key       String   @id
+  count     Int
+  expiresAt DateTime
+}
+```
+
+---
+
+## Kysely
+
+**Package:** `@himayah/adapter-kysely`
+
+Full type-safe query builder support. Pass your Kysely instance and optionally override table names.
+
+### Installation
+
+```bash
+pnpm add @himayah/adapter-kysely
+```
+
+### Setup
+
+```ts title="lib/auth.ts"
+import { Kysely, PostgresDialect } from "kysely";
+import { kyselyAdapter } from "@himayah/adapter-kysely";
+import type { Database } from "./db-types"; // your Kysely type definition
+
+const db = new Kysely<Database>({
+  dialect: new PostgresDialect({ pool }),
+});
+
+const adapter = kyselyAdapter(db, {
+  // Override only the tables whose names differ from defaults
+  tableNames: {
+    users:              "users",
+    sessions:           "sessions",
+    accounts:           "accounts",
+    verificationTokens: "verification_tokens",
+    orgs:               "orgs",
+    members:            "members",
+    invitations:        "invitations",
+    rateLimits:         "rate_limits",
+  },
+});
+```
+
+### Kysely Database Type
+
+```ts title="db-types.ts"
+import type { ColumnType, Generated, Insertable, Selectable, Updateable } from "kysely";
+
+export interface Database {
+  users: UsersTable;
+  accounts: AccountsTable;
+  sessions: SessionsTable;
+  verification_tokens: VerificationTokensTable;
+  rate_limits: RateLimitsTable;
+}
+
+interface UsersTable {
+  id: Generated<string>;
+  email: string;
+  name: string | null;
+  image: string | null;
+  created_at: ColumnType<Date, string | undefined, never>;
+  updated_at: ColumnType<Date, string | undefined, never>;
+}
+
+interface AccountsTable {
+  id: Generated<string>;
+  user_id: string;
+  provider: string;
+  provider_account_id: string;
+  access_token: string | null;
+  refresh_token: string | null;
+}
+
+interface SessionsTable {
+  id: Generated<string>;
+  user_id: string;
+  expires_at: ColumnType<Date, string, never>;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+interface VerificationTokensTable {
+  id: Generated<string>;
+  identifier: string;
+  token: string;
+  expires_at: ColumnType<Date, string, never>;
+  created_at: ColumnType<Date, string | undefined, never>;
+}
+
+interface RateLimitsTable {
+  key: string;
+  count: number;
+  expires_at: ColumnType<Date, string, never>;
+}
+```
+
+---
+
+## Writing a Custom Adapter
+
+If none of the official adapters work for your database, implement the `HimayahAdapter` interface directly:
+
+```ts
+import type { HimayahAdapter } from "@himayah/adapter";
+
+const myAdapter: HimayahAdapter = {
+  async getUserByEmail(email) { /* ... */ },
+  async getUserById(id) { /* ... */ },
+  async createUser(data) { /* ... */ },
+  async updateUser(id, data) { /* ... */ },
+
+  async createAccount(data) { /* ... */ },
+  async getAccountByProvider(provider, providerAccountId) { /* ... */ },
+
+  async createVerificationToken(data) { /* ... */ },
+  async getVerificationToken(identifier, token) { /* ... */ },
+  async deleteVerificationToken(id) { /* ... */ },
+
+  // Optional — only needed for stateful sessions:
+  async createSession(data) { /* ... */ },
+  async getSession(id) { /* ... */ },
+  async deleteSession(id) { /* ... */ },
+
+  // Optional — only needed for database rate limiting:
+  async getRateLimit(key) { /* ... */ },
+  async setRateLimit(key, count, expiresAt) { /* ... */ },
+};
+```
+
+<Accordions>
+  <Accordion title="Minimum required methods">
+    If you only use the **password plugin** with **stateless JWE sessions**, the minimum required adapter methods are:
+
+    - `getUserByEmail`
+    - `getUserById`
+    - `createUser`
+    - `updateUser`
+
+    Every additional feature (OAuth, magic links, OTP, stateful sessions, orgs) requires its respective methods.
+  </Accordion>
+</Accordions>

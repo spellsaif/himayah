@@ -1,0 +1,574 @@
+---
+title: Getting Started
+description: Install Himayah, define your schema, mount the handler, and have a working auth system in under 10 minutes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Getting Started
+
+This guide walks you through installing Himayah, connecting it to your database, and mounting it in your framework of choice.
+
+> [!TIP]
+> **Supercharge Your Setup:** Skip the manual setup entirely! You can get a production-ready authentication configuration in seconds by running the interactive scaffolding CLI:
+> ```bash
+> npx himayah init
+> ```
+> This tool dynamically configures your choice of 8 frameworks, 3 ORMs, 3 databases, and handles schemas, route handlers, and configurations automatically.
+
+<Callout type="info">
+  Himayah requires **TypeScript 5+** and a runtime that supports the **Web Crypto API** (Node.js 18+, Cloudflare Workers, Deno, Bun, Vercel Edge, etc.).
+</Callout>
+
+---
+
+<Steps>
+
+<Step>
+
+## Install Packages
+
+Install the core packages first. You'll always need `@himayah/core` and `@himayah/session`:
+
+<Tabs items={['pnpm', 'npm', 'yarn', 'bun']}>
+  <Tab value="pnpm">
+    ```bash
+    pnpm add @himayah/core @himayah/session
+    ```
+  </Tab>
+  <Tab value="npm">
+    ```bash
+    npm install @himayah/core @himayah/session
+    ```
+  </Tab>
+  <Tab value="yarn">
+    ```bash
+    yarn add @himayah/core @himayah/session
+    ```
+  </Tab>
+  <Tab value="bun">
+    ```bash
+    bun add @himayah/core @himayah/session
+    ```
+  </Tab>
+</Tabs>
+
+Then install the database adapter that matches your ORM:
+
+<Tabs items={['Drizzle ORM', 'Prisma', 'Kysely']}>
+  <Tab value="Drizzle ORM">
+    ```bash
+    pnpm add @himayah/adapter-drizzle
+    ```
+  </Tab>
+  <Tab value="Prisma">
+    ```bash
+    pnpm add @himayah/adapter-prisma
+    ```
+  </Tab>
+  <Tab value="Kysely">
+    ```bash
+    pnpm add @himayah/adapter-kysely
+    ```
+  </Tab>
+</Tabs>
+
+And any auth plugins you want:
+
+```bash
+# Password credentials (email + password)
+pnpm add @himayah/plugin-password
+
+# OAuth (GitHub, Google, any OIDC provider)
+pnpm add @himayah/plugin-oauth
+
+# Passwordless email magic links
+pnpm add @himayah/plugin-magic-link
+
+# One-time passcodes via SMS or email
+pnpm add @himayah/plugin-otp
+```
+
+</Step>
+
+<Step>
+
+## Define Your Schema
+
+Himayah is schema-first: **you define the tables**. Here's a minimal working schema:
+
+<Tabs items={['Drizzle (Programmatic - Recommended)', 'Drizzle (PostgreSQL)', 'Drizzle (SQLite)', 'Prisma']}>
+  <Tab value="Drizzle (Programmatic - Recommended)">
+    If using Drizzle ORM, you can bypass writing 100+ lines of table schema code. Simply use the programmatic schema builder inside your schema definition file:
+
+    ```ts title="schema.ts"
+    import { pgTable } from "drizzle-orm/pg-core";
+    import { createPGSchemas } from "@himayah/adapter-drizzle";
+
+    // Generates all required auth tables programmatically (users, sessions, passwords, verificationTokens, etc.)
+    export const authSchemas = createPGSchemas(pgTable);
+
+    // Export individual tables if needed
+    export const {
+      users,
+      sessions,
+      passwords,
+      verificationTokens,
+      accounts,
+      orgs,
+      members,
+      invitations,
+      rateLimits,
+    } = authSchemas;
+    ```
+    
+    *(Note: Dialect-specific builders `createSQLiteSchemas` and `createMySQLSchemas` are also available inside `@himayah/adapter-drizzle`!)*
+  </Tab>
+  <Tab value="Drizzle (PostgreSQL)">
+    ```ts title="schema.ts"
+    import { pgTable, text, timestamp, boolean } from "drizzle-orm/pg-core";
+
+    export const users = pgTable("users", {
+      id:        text("id").primaryKey(),
+      email:     text("email").notNull().unique(),
+      name:      text("name"),
+      image:     text("image"),
+      createdAt: timestamp("created_at").notNull().defaultNow(),
+      updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    });
+
+    // Required only if using OAuth providers
+    export const accounts = pgTable("accounts", {
+      id:                text("id").primaryKey(),
+      userId:            text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      provider:          text("provider").notNull(),
+      providerAccountId: text("provider_account_id").notNull(),
+      accessToken:       text("access_token"),
+      refreshToken:      text("refresh_token"),
+    });
+
+    // Required only if using magic link or OTP plugins
+    export const verificationTokens = pgTable("verification_tokens", {
+      id:         text("id").primaryKey(),
+      identifier: text("identifier").notNull(),
+      token:      text("token").notNull(),
+      expiresAt:  timestamp("expires_at").notNull(),
+      createdAt:  timestamp("created_at").notNull().defaultNow(),
+    });
+
+    // Required only if using stateful sessions (for revocation)
+    export const sessions = pgTable("sessions", {
+      id:        text("id").primaryKey(),
+      userId:    text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      expiresAt: timestamp("expires_at").notNull(),
+      createdAt: timestamp("created_at").notNull().defaultNow(),
+    });
+
+    // Required only if using password plugin
+    export const passwords = pgTable("passwords", {
+      userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+      hash:   text("hash").notNull(),
+    });
+    ```
+  </Tab>
+  <Tab value="Drizzle (SQLite)">
+    ```ts title="schema.ts"
+    import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+
+    export const users = sqliteTable("users", {
+      id:        text("id").primaryKey(),
+      email:     text("email").notNull().unique(),
+      name:      text("name"),
+      image:     text("image"),
+      createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+      updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+    });
+
+    export const accounts = sqliteTable("accounts", {
+      id:                text("id").primaryKey(),
+      userId:            text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      provider:          text("provider").notNull(),
+      providerAccountId: text("provider_account_id").notNull(),
+    });
+
+    export const verificationTokens = sqliteTable("verification_tokens", {
+      id:         text("id").primaryKey(),
+      identifier: text("identifier").notNull(),
+      token:      text("token").notNull(),
+      expiresAt:  integer("expires_at", { mode: "timestamp" }).notNull(),
+      createdAt:  integer("created_at", { mode: "timestamp" }).notNull(),
+    });
+    ```
+  </Tab>
+  <Tab value="Prisma">
+    ```prisma title="schema.prisma"
+    model User {
+      id        String   @id @default(cuid())
+      email     String   @unique
+      name      String?
+      image     String?
+      createdAt DateTime @default(now())
+      updatedAt DateTime @updatedAt
+      accounts  Account[]
+      sessions  Session[]
+      passwords Password?
+    }
+
+    model Account {
+      id                String  @id @default(cuid())
+      userId            String
+      provider          String
+      providerAccountId String
+      accessToken       String?
+      refreshToken      String?
+      user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+    }
+
+    model VerificationToken {
+      id         String   @id @default(cuid())
+      identifier String
+      token      String
+      expiresAt  DateTime
+      createdAt  DateTime @default(now())
+    }
+
+    model Session {
+      id        String   @id @default(cuid())
+      userId    String
+      expiresAt DateTime
+      createdAt DateTime @default(now())
+      user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    }
+
+    model Password {
+      userId String @id
+      hash   String
+      user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+    }
+    ```
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+## Initialize Himayah
+
+Create a file — typically `lib/auth.ts` — and initialize the `createAuth` coordinator:
+
+```ts title="lib/auth.ts"
+import { createAuth } from "@himayah/core";
+import { createJWTSessionStore } from "@himayah/session";
+import { drizzleAdapter } from "@himayah/adapter-drizzle";
+import { passwordPlugin } from "@himayah/plugin-password";
+import { db } from "./db";
+import {
+  users,
+  accounts,
+  sessions,
+  verificationTokens,
+  passwords,
+} from "./schema";
+import { eq } from "drizzle-orm";
+
+export const auth = createAuth({
+  // 1. Connect your database via the adapter
+  adapter: drizzleAdapter(db, {
+    users,
+    accounts,
+    sessions,          // omit if using stateless sessions
+    verificationTokens,
+  }),
+
+  // 2. Configure the JWE session store
+  //    Use a 32-byte+ secret — set in env variables, never hardcode in production
+  sessionStore: createJWTSessionStore({
+    secret: process.env.AUTH_SECRET!,
+    maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
+  }),
+
+  // 3. Add your plugins
+  plugins: [
+    passwordPlugin({
+      async getPasswordHash(userId) {
+        const pw = await db.query.passwords.findFirst({
+          where: eq(passwords.userId, userId),
+        });
+        return pw?.hash ?? null;
+      },
+      async setPasswordHash(userId, hash) {
+        await db
+          .insert(passwords)
+          .values({ userId, hash })
+          .onConflictDoUpdate({ target: passwords.userId, set: { hash } });
+      },
+    }),
+  ],
+
+  // 4. Set the canonical base URL (used for OAuth callbacks and magic links)
+  baseUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+
+  // 5. Cookie config
+  cookieName: "himayah.sid",
+  csrf: true, // Double-submit CSRF protection (recommended)
+});
+```
+
+<Callout type="warn">
+  Set `AUTH_SECRET` to a cryptographically random 32+ character string. Generate one with:
+  ```bash
+  openssl rand -base64 32
+  ```
+</Callout>
+
+</Step>
+
+<Step>
+
+## Mount the Handler
+
+Himayah exposes a single `auth.handleRequest(req)` handler that maps to your framework's routing:
+
+<Tabs items={['Next.js App Router', 'SvelteKit', 'Remix', 'Astro', 'Nuxt 3', 'Elysia', 'Hono', 'Express']}>
+  <Tab value="Next.js App Router">
+    Create a single-line catch-all route using the specialized Next.js SDK wrapper:
+
+    ```ts title="app/api/auth/[[...route]]/route.ts"
+    import { auth } from "@/lib/auth";
+    import { createNextHandler } from "@himayah/next";
+
+    // Mounts GET, POST, PUT, DELETE, PATCH, and OPTIONS handlers automatically in 1 line
+    export const { GET, POST, PUT, DELETE, PATCH, OPTIONS } = createNextHandler(auth);
+    ```
+
+    This maps and handles all routes under `/api/auth/*` dynamically (sign-in, sign-up, OAuth callbacks, magic links, etc.).
+  </Tab>
+  <Tab value="SvelteKit">
+    Create a standard catch-all API endpoint. SvelteKit supports standard Web `Request` and `Response` objects natively, allowing you to consume the core engine directly with zero extra package dependencies:
+
+    ```ts title="src/routes/api/auth/[...path]/+server.ts"
+    import { auth } from "$lib/auth";
+    import type { RequestHandler } from "./$types";
+
+    export const fallback: RequestHandler = async ({ request }) => {
+      return await auth.handleRequest(request);
+    };
+    ```
+  </Tab>
+  <Tab value="Remix">
+    Define a splat route under your API directory. Remix's loaders and actions receive standard Web `Request` objects, giving you direct integration:
+
+    ```ts title="app/routes/api.auth.$.ts"
+    import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+    import { auth } from "~/lib/auth";
+
+    export const loader = async ({ request }: LoaderFunctionArgs) => {
+      return await auth.handleRequest(request);
+    };
+
+    export const action = async ({ request }: ActionFunctionArgs) => {
+      return await auth.handleRequest(request);
+    };
+    ```
+  </Tab>
+  <Tab value="Astro">
+    Create a dynamic API route. Astro API endpoints consume and return standard Web request objects natively:
+
+    ```ts title="src/pages/api/auth/[...path].ts"
+    import type { APIRoute } from "astro";
+    import { auth } from "../../lib/auth";
+
+    export const ALL: APIRoute = async ({ request }) => {
+      return await auth.handleRequest(request);
+    };
+    ```
+  </Tab>
+  <Tab value="Nuxt 3">
+    Create a catch-all server route in Nuxt using Nitro's standard `toWebRequest` helper:
+
+    ```ts title="server/api/auth/[...].ts"
+    import { auth } from "~/server/utils/auth";
+
+    export default defineEventHandler(async (event) => {
+      // Translates Nitro events directly to Web standard Request objects
+      return await auth.handleRequest(toWebRequest(event));
+    });
+    ```
+  </Tab>
+  <Tab value="Elysia">
+    Elysia is an ultra-fast Bun-native framework that implements standard Web Requests directly:
+
+    ```ts title="src/index.ts"
+    import { Elysia } from "elysia";
+    import { auth } from "./lib/auth";
+
+    const app = new Elysia()
+      .all("/api/auth/*", async ({ request }) => {
+        return await auth.handleRequest(request);
+      })
+      .listen(3000);
+    ```
+  </Tab>
+  <Tab value="Hono">
+    Hono supports custom routing middleware natively. Use the Hono middleware wrapper:
+
+    ```ts title="src/index.ts"
+    import { Hono } from "hono";
+    import { honoMiddleware } from "@himayah/middleware-hono";
+    import { auth } from "./lib/auth";
+
+    const app = new Hono();
+
+    // Mount all auth routes at /api/auth/*
+    app.use("/api/auth/*", honoMiddleware(auth));
+
+    export default app;
+    ```
+  </Tab>
+  <Tab value="Express">
+    Express doesn't support Web API standard Requests natively, so use our Node-compatible middleware wrapper:
+
+    ```ts title="src/server.ts"
+    import express from "express";
+    import { expressMiddleware } from "@himayah/middleware-express";
+    import { auth } from "./lib/auth";
+
+    const app = express();
+    app.use(express.json());
+
+    // Mount all auth routes at /api/auth
+    app.use("/api/auth", expressMiddleware(auth));
+
+    app.listen(3000, () => console.log("Server running on :3000"));
+    ```
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+## Use the Client
+
+Install the type-safe browser client and call auth endpoints from your frontend:
+
+```bash
+pnpm add @himayah/client
+```
+
+```ts title="lib/auth-client.ts"
+import { createAuthClient } from "@himayah/client";
+
+export const authClient = createAuthClient({
+  baseUrl: "/api/auth",
+});
+```
+
+Then use it in your components:
+
+```ts
+// Sign up a new user
+const result = await authClient.password.signUp({
+  email: "user@example.com",
+  password: "hunter2",
+  name: "Jane Doe",
+});
+
+// Sign in an existing user
+const session = await authClient.password.signIn({
+  email: "user@example.com",
+  password: "hunter2",
+});
+
+// Get the current session
+const { data: session } = await authClient.getSession();
+
+// Sign out
+await authClient.signOut();
+```
+
+</Step>
+
+</Steps>
+
+---
+
+## Reading Sessions on the Server
+
+You can read the current user's session on any server-side code:
+
+<Tabs items={['Next.js Server Component', 'Next.js API Route', 'Hono Handler']}>
+  <Tab value="Next.js Server Component">
+    Retrieve user sessions inside Next.js Server Components, Server Actions, or API Routes without manually building standard request headers:
+
+    ```tsx title="app/dashboard/page.tsx"
+    import { auth } from "@/lib/auth";
+    import { getServerSession } from "@himayah/next";
+    import { redirect } from "next/navigation";
+
+    export default async function DashboardPage() {
+      // Automatically extracts Next.js request headers and cookies asynchronously
+      const session = await getServerSession(auth);
+
+      if (!session.ok) {
+        redirect("/login");
+      }
+
+      return <div>Welcome, {session.data.userId}</div>;
+    }
+    ```
+  </Tab>
+  <Tab value="Next.js API Route">
+    ```ts title="app/api/profile/route.ts"
+    import { auth } from "@/lib/auth";
+    import { NextResponse } from "next/server";
+
+    export async function GET(request: Request) {
+      const session = await auth.getSession(request);
+
+      if (!session.ok) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+
+      return NextResponse.json({ userId: session.data.userId });
+    }
+    ```
+  </Tab>
+  <Tab value="Hono Handler">
+    ```ts
+    app.get("/profile", async (c) => {
+      const session = await auth.getSession(c.req.raw);
+
+      if (!session.ok) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+
+      return c.json({ userId: session.data.userId });
+    });
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Environment Variables Reference
+
+```bash title=".env"
+# Required — generate with: openssl rand -base64 32
+AUTH_SECRET="your-super-secret-32-char-minimum-key"
+
+# Required — your app's canonical public URL
+NEXT_PUBLIC_APP_URL="https://yourapp.com"
+
+# Required if using OAuth providers
+GITHUB_CLIENT_ID="..."
+GITHUB_CLIENT_SECRET="..."
+GOOGLE_CLIENT_ID="..."
+GOOGLE_CLIENT_SECRET="..."
+
+# Required if using Redis rate limiting
+REDIS_URL="redis://localhost:6379"
+```

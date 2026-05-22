@@ -1,0 +1,520 @@
+---
+title: Auth Plugins
+description: Configure password credentials, OAuth providers, magic links, OTP, WebAuthn passkeys, and multi-tenant organizations.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+
+# Auth Plugins
+
+Himayah is extended through composable plugins. Each plugin registers its own HTTP endpoints, validation logic, and database interactions. You only pay for what you use.
+
+```ts title="lib/auth.ts"
+import { createAuth } from "@himayah/core";
+import { passwordPlugin } from "@himayah/plugin-password";
+import { oauthPlugin, github, google } from "@himayah/plugin-oauth";
+import { magicLinkPlugin } from "@himayah/plugin-magic-link";
+import { otpPlugin } from "@himayah/plugin-otp";
+import { organizationPlugin } from "@himayah/plugin-organization";
+
+export const auth = createAuth({
+  adapter,
+  sessionStore,
+  plugins: [
+    passwordPlugin({ ... }),
+    oauthPlugin({ providers: [github, google] }),
+    magicLinkPlugin({ sendVerificationToken }),
+    otpPlugin({ sendOTP }),
+    organizationPlugin(),
+  ],
+});
+```
+
+---
+
+## Password Plugin
+
+**Package:** `@himayah/plugin-password`
+
+Standard email + password authentication using PBKDF2-SHA256 with 100,000 iterations. You provide the storage callbacks — Himayah handles the hashing.
+
+### Installation
+
+```bash
+pnpm add @himayah/plugin-password
+```
+
+### Configuration
+
+```ts title="lib/auth.ts"
+import { passwordPlugin } from "@himayah/plugin-password";
+import { db } from "./db";
+import { passwords } from "./schema";
+import { eq } from "drizzle-orm";
+
+passwordPlugin({
+  // Called when verifying a sign-in attempt
+  async getPasswordHash(userId: string): Promise<string | null> {
+    const record = await db.query.passwords.findFirst({
+      where: eq(passwords.userId, userId),
+    });
+    return record?.hash ?? null;
+  },
+
+  // Called when creating or changing a password
+  async setPasswordHash(userId: string, hash: string): Promise<void> {
+    await db
+      .insert(passwords)
+      .values({ userId, hash })
+      .onConflictDoUpdate({ target: passwords.userId, set: { hash } });
+  },
+})
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/auth/password/sign-up` | Create a new user with email + password |
+| `POST` | `/api/auth/password/sign-in` | Authenticate user and create a session |
+| `POST` | `/api/auth/password/change-password` | Update password (requires active session) |
+
+### Usage
+
+<Tabs items={['Browser (Client)', 'API (curl)']}>
+  <Tab value="Browser (Client)">
+    ```ts
+    import { authClient } from "./lib/auth-client";
+
+    // Sign up
+    const { data, error } = await authClient.password.signUp({
+      email: "jane@example.com",
+      password: "s3cur3-p@ssword!",
+      name: "Jane Doe",
+    });
+
+    // Sign in
+    const { data, error } = await authClient.password.signIn({
+      email: "jane@example.com",
+      password: "s3cur3-p@ssword!",
+    });
+
+    // Change password
+    await authClient.password.changePassword({
+      currentPassword: "s3cur3-p@ssword!",
+      newPassword: "n3w-s3cur3-p@ssword!",
+    });
+    ```
+  </Tab>
+  <Tab value="API (curl)">
+    ```bash
+    # Sign up
+    curl -X POST https://yourapp.com/api/auth/password/sign-up \
+      -H "Content-Type: application/json" \
+      -H "x-csrf-token: <token>" \
+      -d '{"email":"jane@example.com","password":"s3cur3-p@ssword!","name":"Jane Doe"}'
+
+    # Sign in
+    curl -X POST https://yourapp.com/api/auth/password/sign-in \
+      -H "Content-Type: application/json" \
+      -H "x-csrf-token: <token>" \
+      -d '{"email":"jane@example.com","password":"s3cur3-p@ssword!"}'
+    ```
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+  Passwords are never stored in plaintext. The `hash` stored in your database is the PBKDF2-SHA256 output (100,000 rounds), and comparisons are always done in constant time.
+</Callout>
+
+---
+
+## OAuth Plugin
+
+**Package:** `@himayah/plugin-oauth`
+
+OAuth 2.0 and OIDC login with PKCE, state verification, and automatic user upsert. Comes with built-in configs for GitHub and Google.
+
+### Installation
+
+```bash
+pnpm add @himayah/plugin-oauth
+```
+
+### Configuration
+
+<Tabs items={['GitHub + Google (built-in)', 'Custom OIDC Provider']}>
+  <Tab value="GitHub + Google (built-in)">
+    ```ts title="lib/auth.ts"
+    import { oauthPlugin, github, google } from "@himayah/plugin-oauth";
+
+    oauthPlugin({
+      providers: [
+        github({
+          clientId: process.env.GITHUB_CLIENT_ID!,
+          clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+        }),
+        google({
+          clientId: process.env.GOOGLE_CLIENT_ID!,
+          clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+        }),
+      ],
+    })
+    ```
+  </Tab>
+  <Tab value="Custom OIDC Provider">
+    ```ts title="lib/auth.ts"
+    import { oauthPlugin } from "@himayah/plugin-oauth";
+
+    oauthPlugin({
+      providers: [
+        {
+          id: "my-provider",
+          name: "My OIDC Provider",
+          type: "oidc",
+          clientId: process.env.OIDC_CLIENT_ID!,
+          clientSecret: process.env.OIDC_CLIENT_SECRET!,
+          issuer: "https://accounts.myprovider.com",
+          scopes: ["openid", "email", "profile"],
+          mapProfile(profile) {
+            return {
+              email: profile.email,
+              name: profile.name ?? profile.preferred_username,
+              image: profile.picture ?? null,
+            };
+          },
+        },
+      ],
+    })
+    ```
+  </Tab>
+</Tabs>
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/auth/oauth/authorize/:providerId` | Redirect to provider authorization URL |
+| `GET` | `/api/auth/oauth/callback/:providerId` | Handle the OAuth callback and create session |
+
+### Usage
+
+```ts
+// Redirect the user to the OAuth provider
+// (typically done via a "Sign in with GitHub" button)
+window.location.href = "/api/auth/oauth/authorize/github";
+
+// After redirect, the callback creates a session automatically
+// and redirects the user to / (or a configured redirectTo)
+```
+
+### How It Works
+
+1. User clicks "Sign in with GitHub"
+2. Himayah generates a cryptographically random **state** token and **PKCE code verifier**, stores them in short-lived cookies
+3. User is redirected to GitHub with the state + code challenge
+4. GitHub calls back to `/api/auth/oauth/callback/github`
+5. Himayah verifies the **state** (constant-time) and **PKCE code** before exchanging for tokens
+6. User's profile is fetched, account is linked or created, and a session cookie is set
+
+<Callout type="info">
+  OAuth state and PKCE verifier comparisons are always performed using `timingSafeEqual` to prevent timing-based forgery attacks.
+</Callout>
+
+---
+
+## Magic Link Plugin
+
+**Package:** `@himayah/plugin-magic-link`
+
+Passwordless authentication via secure one-click email links. Tokens are single-use and expire after a configurable window.
+
+### Installation
+
+```bash
+pnpm add @himayah/plugin-magic-link
+```
+
+### Configuration
+
+```ts title="lib/auth.ts"
+import { magicLinkPlugin } from "@himayah/plugin-magic-link";
+
+magicLinkPlugin({
+  // Implement this with your email provider (Resend, Nodemailer, SendGrid, etc.)
+  async sendVerificationToken(email: string, token: string, url: string) {
+    await resend.emails.send({
+      from: "auth@yourapp.com",
+      to: email,
+      subject: "Sign in to YourApp",
+      html: `
+        <p>Click the link below to sign in. This link expires in 15 minutes.</p>
+        <a href="${url}">Sign in to YourApp →</a>
+        <p>If you didn't request this, you can safely ignore this email.</p>
+      `,
+    });
+  },
+
+  expiresIn: 900,      // Token lifetime in seconds (default: 15 minutes)
+  rateLimitLimit: 3,   // Max requests per window per email address
+  rateLimitWindow: 300, // Window duration in seconds (default: 5 minutes)
+})
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/auth/magic-link/send` | Generate and email a magic link |
+| `GET` | `/api/auth/magic-link/verify` | Verify token and create session |
+
+### Usage
+
+```ts
+// 1. Request a magic link
+await authClient.magicLink.send({ email: "jane@example.com" });
+// → User receives an email with a link like:
+//   https://yourapp.com/api/auth/magic-link/verify?token=abc123&email=jane@example.com
+
+// 2. Verification happens automatically when the user clicks the link
+//    The server validates the token and sets a session cookie
+```
+
+<Callout type="warn">
+  By default, magic links use an **in-memory rate limiter**. In production with multiple server instances, configure a [Redis or database rate limiter](/docs/rate-limiting) to share state across nodes.
+</Callout>
+
+---
+
+## OTP Plugin
+
+**Package:** `@himayah/plugin-otp`
+
+Time-limited numeric one-time passcodes sent via SMS or email.
+
+### Installation
+
+```bash
+pnpm add @himayah/plugin-otp
+```
+
+### Configuration
+
+```ts title="lib/auth.ts"
+import { otpPlugin } from "@himayah/plugin-otp";
+
+otpPlugin({
+  async sendOTP(identifier: string, token: string) {
+    // identifier can be a phone number or email
+    await smsProvider.send({
+      to: identifier,
+      message: `Your YourApp verification code is: ${token}. Expires in 10 minutes.`,
+    });
+  },
+
+  otpLength: 6,        // Number of digits (default: 6)
+  expiresIn: 600,      // Token lifetime in seconds (default: 10 minutes)
+  rateLimitLimit: 5,   // Max OTP requests per window
+  rateLimitWindow: 300, // 5-minute window
+})
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/auth/otp/send` | Generate and send an OTP |
+| `POST` | `/api/auth/otp/verify` | Verify OTP and create session |
+
+### Usage
+
+```ts
+// 1. Request an OTP
+await authClient.otp.send({ identifier: "+15551234567" });
+
+// 2. User submits the code from their phone
+const { data, error } = await authClient.otp.verify({
+  identifier: "+15551234567",
+  token: "847291",
+});
+```
+
+---
+
+## Passkey Plugin (WebAuthn)
+
+**Package:** `@himayah/plugin-passkey`
+
+Biometric authentication using the WebAuthn standard — fingerprint, Face ID, Windows Hello, hardware security keys.
+
+### Installation
+
+```bash
+pnpm add @himayah/plugin-passkey
+```
+
+### Configuration
+
+```ts title="lib/auth.ts"
+import { passkeyPlugin } from "@himayah/plugin-passkey";
+
+passkeyPlugin({
+  rpName: "Your App Name",                // Shown to users in the browser prompt
+  rpID: "yourapp.com",                    // Must be your domain (no port, no scheme)
+  origin: process.env.NEXT_PUBLIC_APP_URL!, // Must match the exact origin
+})
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/auth/passkey/register/options` | Get registration challenge |
+| `POST` | `/api/auth/passkey/register/verify` | Verify and store new passkey credential |
+| `POST` | `/api/auth/passkey/authenticate/options` | Get authentication challenge |
+| `POST` | `/api/auth/passkey/authenticate/verify` | Verify passkey and create session |
+
+### Usage
+
+```ts
+import { startRegistration, startAuthentication } from "@simplewebauthn/browser";
+
+// Register a new passkey
+const options = await authClient.passkey.getRegistrationOptions();
+const response = await startRegistration(options);
+await authClient.passkey.verifyRegistration(response);
+
+// Authenticate with an existing passkey
+const options = await authClient.passkey.getAuthenticationOptions();
+const response = await startAuthentication(options);
+await authClient.passkey.verifyAuthentication(response);
+```
+
+<Callout type="info">
+  The `@simplewebauthn/browser` package handles the browser-side WebAuthn ceremony. Install it with `pnpm add @simplewebauthn/browser`.
+</Callout>
+
+---
+
+## Organization Plugin
+
+**Package:** `@himayah/plugin-organization`
+
+Multi-tenant organization support with membership management, role-based access, and email invitations.
+
+### Installation
+
+```bash
+pnpm add @himayah/plugin-organization
+```
+
+### Schema
+
+Add these tables to your schema before enabling the plugin:
+
+```ts title="schema.ts"
+export const orgs = pgTable("orgs", {
+  id:        text("id").primaryKey(),
+  name:      text("name").notNull(),
+  slug:      text("slug").notNull().unique(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const members = pgTable("members", {
+  id:     text("id").primaryKey(),
+  orgId:  text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role:   text("role", { enum: ["owner", "admin", "member"] }).notNull().default("member"),
+});
+
+export const invitations = pgTable("invitations", {
+  id:          text("id").primaryKey(),
+  orgId:       text("org_id").notNull().references(() => orgs.id, { onDelete: "cascade" }),
+  email:       text("email").notNull(),
+  role:        text("role").notNull().default("member"),
+  token:       text("token").notNull(),
+  expiresAt:   timestamp("expires_at").notNull(),
+  invitedById: text("invited_by_id").references(() => users.id),
+});
+```
+
+### Configuration
+
+```ts title="lib/auth.ts"
+import { organizationPlugin } from "@himayah/plugin-organization";
+
+organizationPlugin()
+```
+
+Register the adapter with organization tables:
+
+```ts
+adapter: drizzleAdapter(db, {
+  users,
+  orgs,
+  members,
+  invitations,
+})
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/auth/org/create` | Create a new organization |
+| `POST` | `/api/auth/org/invite` | Invite a user to an organization |
+| `POST` | `/api/auth/org/accept-invite` | Accept a pending invitation |
+| `POST` | `/api/auth/org/remove-member` | Remove a member from an organization |
+| `POST` | `/api/auth/org/set-active` | Set the user's active organization |
+| `GET` | `/api/auth/org/list` | List organizations the user belongs to |
+
+### Usage
+
+```ts
+// Create an organization (current user becomes owner)
+await authClient.org.create({ name: "Acme Inc.", slug: "acme" });
+
+// Invite someone
+await authClient.org.invite({
+  orgId: "org_abc123",
+  email: "colleague@example.com",
+  role: "admin",
+});
+
+// Accept an invitation
+await authClient.org.acceptInvite({ token: "invite-token-from-email" });
+
+// Switch active org (stored in session)
+await authClient.org.setActive({ orgId: "org_abc123" });
+
+// Read active org from server-side session
+const session = await auth.getSession(request);
+console.log(session.data.activeOrgId); // "org_abc123"
+```
+
+<Accordions>
+  <Accordion title="Role Hierarchy">
+    - **owner** — Full control: can invite, remove, and delete the organization
+    - **admin** — Can invite and remove members, cannot delete the organization
+    - **member** — Read-only access to organization resources
+
+    Role checks are your responsibility in application code. The session always carries `activeOrgId` which you can use to query the `members` table for the user's role.
+  </Accordion>
+  <Accordion title="Invitation Email Integration">
+    The organization plugin generates a secure invitation token stored in the `invitations` table. You're responsible for sending the invitation email — the plugin exposes the token via a callback:
+
+    ```ts
+    organizationPlugin({
+      async onInvitationCreated(invitation, org, invitedBy) {
+        await resend.emails.send({
+          to: invitation.email,
+          subject: `You're invited to join ${org.name}`,
+          html: `<a href="${baseUrl}/accept-invite?token=${invitation.token}">Accept Invitation</a>`,
+        });
+      }
+    })
+    ```
+  </Accordion>
+</Accordions>

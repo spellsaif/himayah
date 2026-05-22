@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import 'fumadocs-ui/style.css';
+
+@layer base {
+  :root {
+    --fd-background: 43 40% 95%; /* Soft Warm Sand Cream */
+    --fd-foreground: 30 25% 15%; /* Charcoal Desert Dunes mud */
+    --fd-card: 43 35% 93%;
+    --fd-card-foreground: 30 25% 15%;
+    --fd-popover: 43 35% 93%;
+    --fd-popover-foreground: 30 25% 15%;
+    --fd-primary: 38 75% 45%; /* Royal Saffron Gold */
+    --fd-primary-foreground: 43 40% 97%;
+    --fd-muted: 40 20% 88%;
+    --fd-muted-foreground: 30 15% 45%;
+    --fd-accent: 38 70% 88%;
+    --fd-accent-foreground: 38 75% 35%;
+    --fd-border: 40 25% 82%;
+    --fd-ring: 38 75% 45%;
+  }
+
+  .dark {
+    --fd-background: 24 20% 7%; /* Midnight Arabian Desert Night */
+    --fd-foreground: 40 30% 92%; /* Starry Dunes White */
+    --fd-card: 24 18% 10%;
+    --fd-card-foreground: 40 30% 92%;
+    --fd-popover: 24 18% 10%;
+    --fd-popover-foreground: 40 30% 92%;
+    --fd-primary: 38 90% 55%; /* Luminous Saffron Gold */
+    --fd-primary-foreground: 24 20% 7%;
+    --fd-muted: 24 12% 16%;
+    --fd-muted-foreground: 40 15% 65%;
+    --fd-accent: 38 80% 15%;
+    --fd-accent-foreground: 38 90% 65%;
+    --fd-border: 24 10% 18%;
+    --fd-ring: 38 90% 55%;
+  }
+
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Better body defaults */
+  body {
+    @apply antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Tighten heading tracking in docs */
+  h1, h2, h3, h4 {
+    letter-spacing: -0.02em;
+  }
+
+  /* Inline code in prose */
+  :not(pre) > code {
+    @apply font-mono text-[0.875em] px-1.5 py-0.5 rounded-md;
+    @apply bg-fd-muted text-fd-foreground;
+  }
+}
+
+@layer utilities {
+  /* Smooth element transitions for hover states */
+  .transition-default {
+    @apply transition-all duration-150 ease-in-out;
+  }
+
+  /* Pulse animation for the "live" badge */
+  @keyframes pulse-slow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .animate-pulse {
+    animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}

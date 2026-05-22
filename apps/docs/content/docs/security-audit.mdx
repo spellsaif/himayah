@@ -1,0 +1,264 @@
+---
+title: Security
+description: Himayah's threat model, the attacks it defends against, and the cryptographic decisions behind every default.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+
+# Security
+
+Security is not an afterthought in Himayah — it's a design constraint. This page documents the threat model, every attack vector that was audited, and exactly how each one is mitigated in the codebase.
+
+<Callout type="info">
+  All mitigations described below are **on by default**. You don't need to enable any security feature manually.
+</Callout>
+
+---
+
+## Threat Model Summary
+
+| # | Threat | Status |
+|---|---|---|
+| 1 | Timing side-channels on token comparison | ✅ Mitigated |
+| 2 | Multi-node rate limit bypass | ✅ Mitigated |
+| 3 | Host header spoofing on OAuth callbacks | ✅ Mitigated |
+| 4 | Stateless session replay after sign-out | ✅ Mitigated |
+| 5 | Offline dictionary attacks on password hashes | ✅ Mitigated |
+| 6 | Cross-Site Request Forgery (CSRF) | ✅ Mitigated |
+| 7 | PKCE downgrade on OAuth flows | ✅ Mitigated |
+| 8 | XSS session token theft | ✅ Mitigated |
+
+---
+
+## 1. Timing Side-Channel on Token Comparison
+
+**Risk level: HIGH**
+
+Standard JavaScript `===` string equality short-circuits on the first mismatched byte. On a network-accessible endpoint, an attacker can measure the sub-millisecond response time difference and brute-force CSRF tokens, OAuth state parameters, or OTP codes one character at a time — without triggering rate limits.
+
+**Mitigation:**
+
+All security-critical comparisons in Himayah use a custom `timingSafeEqual` that always runs for the full string length regardless of where the mismatch occurs:
+
+```ts
+export function timingSafeEqual(a: string, b: string): boolean {
+  const aBytes = new TextEncoder().encode(a);
+  const bBytes = new TextEncoder().encode(b);
+  // Length mismatch is folded into the result, not short-circuited
+  let mismatch = aBytes.length !== bBytes.length ? 1 : 0;
+  const maxLen = Math.max(aBytes.length, bBytes.length);
+  for (let i = 0; i < maxLen; i++) {
+    mismatch |= (aBytes[i] ?? 0) ^ (bBytes[i] ?? 0);
+  }
+  return mismatch === 0;
+}
+```
+
+Applied to:
+- CSRF token header vs cookie comparison
+- OAuth `state` parameter verification
+- Magic link and OTP token verification
+- Password hash comparison (after PBKDF2 derivation)
+
+---
+
+## 2. Multi-Node Rate Limit Bypass
+
+**Risk level: HIGH** (for production serverless / multi-container deployments)
+
+In-memory rate limiters are isolated to a single process. In a serverless environment (Vercel, Cloudflare Workers) or a load-balanced cluster, each instance maintains its own counter. A motivated attacker can exhaust OTP retries across N nodes, effectively multiplying the limit by N.
+
+**Mitigation:**
+
+Himayah makes the rate limiter **pluggable**. In-memory is the default (suitable for local dev), but production deployments should use:
+
+- **Redis:** `@himayah/rate-limit-redis` — shared atomic counters with TTL precision via `SET ... PX`. Works with ioredis, node-redis, and Upstash.
+- **Database:** `DatabaseRateLimitStore` from `@himayah/core` — stores counters in your existing DB. Zero extra infrastructure.
+
+See the [Rate Limiting](/docs/rate-limiting) guide for setup instructions.
+
+<Callout type="warn">
+  Never use in-memory rate limiting in a multi-instance production deployment. Set `rateLimitStore` in your `createAuth` config.
+</Callout>
+
+---
+
+## 3. Host Header Spoofing
+
+**Risk level: MEDIUM**
+
+In proxy-heavy environments (Cloudflare, Nginx, AWS ALB), the `Host` and `X-Forwarded-Host` request headers can be controlled by an attacker. If an auth library constructs OAuth redirect URIs or magic link URLs dynamically from these headers, an attacker can inject a malicious origin and capture auth codes or tokens.
+
+**Example attack:**
+```
+GET /api/auth/oauth/authorize/github
+Host: evil.com       ← injected by attacker
+X-Forwarded-Host: evil.com
+
+→ GitHub redirects to: https://evil.com/api/auth/oauth/callback/github?code=...
+```
+
+**Mitigation:**
+
+`createAuth` accepts an explicit `baseUrl`:
+
+```ts
+export const auth = createAuth({
+  baseUrl: process.env.NEXT_PUBLIC_APP_URL!, // e.g. "https://yourapp.com"
+  // ...
+});
+```
+
+All OAuth callback URLs and magic link verification URLs are **hardcoded to this `baseUrl`** — never derived from request headers. This completely neutralizes host header injection attacks.
+
+<Callout type="warn">
+  Always set `baseUrl` to your app's canonical URL from an environment variable. Never derive it from `request.headers.get("host")`.
+</Callout>
+
+---
+
+## 4. Session Replay After Sign-Out
+
+**Risk level: MEDIUM**
+
+Stateless JWE sessions are cryptographically self-contained. If a user's session cookie is stolen (e.g., via a physical compromise or log exposure), deleting the database session row does **not** invalidate the cookie — it remains valid until its `exp` claim expires.
+
+**Mitigation:**
+
+Himayah provides an opt-in stateful session store:
+
+```ts
+import { createDatabaseSessionStore } from "@himayah/session";
+
+sessionStore: createDatabaseSessionStore(adapter)
+```
+
+With this enabled:
+- Every `auth.getSession(req)` call validates the session ID against the `sessions` table
+- `auth.signOut(req)` deletes the database row — the session is immediately dead, even if the cookie is still present
+- Account bans, forced sign-outs, and password-change revocations all work reliably
+
+**When to use stateful sessions:**
+
+| Scenario | Recommendation |
+|---|---|
+| Standard SaaS app | Stateful sessions (safer, one extra DB query per request) |
+| High-throughput API / Edge | Stateless JWE (faster, no DB lookup) |
+| Requires immediate revocation | **Must** use stateful sessions |
+
+---
+
+## 5. Password Hashing
+
+**Risk level: HIGH** (if using weak parameters)
+
+Passwords stored as plain hashes (MD5, SHA-1, even SHA-256) are trivially crackable with GPU-accelerated dictionary attacks on modern hardware.
+
+**Mitigation:**
+
+The `@himayah/plugin-password` uses **PBKDF2-SHA256** via the Web Crypto API with the following parameters:
+
+```ts
+{
+  algorithm: "PBKDF2",
+  hash: "SHA-256",
+  iterations: 100_000,  // NIST SP 800-132 recommends ≥ 10,000; we use 10x
+  saltLength: 16,       // 128-bit cryptographically random salt per hash
+}
+```
+
+- A **unique 16-byte random salt** is generated per password — rainbow table attacks are impossible
+- **100,000 iterations** makes each hash take ~100ms on modern hardware, making offline brute-force impractical
+- The final hash is stored as `<salt>:<hash>` in your `passwords` table — Himayah never stores plaintext
+
+<Callout type="info">
+  PBKDF2 runs natively through `crypto.subtle.deriveBits` — no native addons, no Node.js-specific APIs. It works on every runtime Himayah supports.
+</Callout>
+
+<Accordions>
+  <Accordion title="Why not bcrypt or Argon2?">
+    bcrypt and Argon2 are excellent algorithms but rely on C/C++ native addons that don't work on Edge runtimes (Cloudflare Workers, Vercel Edge) or Deno/Bun without special builds.
+
+    PBKDF2-SHA256 with 100,000 iterations is universally available via the **Web Crypto API** (`crypto.subtle`) and provides equivalent protection for the vast majority of use cases. If you have specific requirements for Argon2, you can implement your own `getPasswordHash`/`setPasswordHash` callbacks in the password plugin.
+  </Accordion>
+</Accordions>
+
+---
+
+## 6. Cross-Site Request Forgery (CSRF)
+
+**Risk level: HIGH**
+
+Without CSRF protection, an attacker can trick a logged-in user into submitting a form to your auth endpoints from a third-party origin (e.g., causing an unwanted password change or account modification).
+
+**Mitigation: Double-Submit Cookie Pattern**
+
+Himayah uses the **double-submit cookie** strategy:
+
+1. On first request, Himayah sets a `himayah.csrf` cookie with a cryptographically random token (not `HttpOnly` — the JS client must read it)
+2. All mutating requests (`POST`, `PUT`, `DELETE`, `PATCH`) must include this token in the `x-csrf-token` header
+3. Himayah compares the cookie value and header value using `timingSafeEqual`
+4. Cross-origin requests cannot read cookies from a different origin — so an attacker cannot replicate the header
+
+```
+Attacker's page                     Your App
+    │                                   │
+    │  POST /api/auth/password/change   │
+    │  Host: yourapp.com                │
+    │  x-csrf-token: ???               │  ← Can't read your app's cookie!
+    │                                   │
+    │  ←── 403 Forbidden ──────────────│
+```
+
+CSRF protection is **enabled by default** (`csrf: true`). The `@himayah/client` handles token extraction and injection automatically on every request.
+
+---
+
+## 7. OAuth PKCE Downgrade
+
+**Risk level: MEDIUM**
+
+Without PKCE (Proof Key for Code Exchange), an authorization code intercepted in transit (e.g., via a redirect URI mismatch or referrer leakage) can be exchanged for tokens by an attacker.
+
+**Mitigation:**
+
+Himayah enforces PKCE on all OAuth flows:
+
+```
+1. Generate cryptographically random code_verifier (256-bit)
+2. Compute code_challenge = BASE64URL(SHA-256(code_verifier))
+3. Send code_challenge to provider in authorization request
+4. Store code_verifier in a short-lived HttpOnly cookie
+5. On callback: verify code_verifier against code_challenge before token exchange
+```
+
+An intercepted authorization code is useless without the `code_verifier` — which never leaves the server.
+
+---
+
+## 8. XSS Session Token Theft
+
+**Risk level: HIGH**
+
+If session tokens are stored in `localStorage` or regular cookies, a single XSS vulnerability can exfiltrate all user sessions.
+
+**Mitigation:**
+
+Session cookies are set with:
+
+```
+Set-Cookie: himayah.sid=<token>; HttpOnly; Secure; SameSite=Lax; Path=/
+```
+
+- **`HttpOnly`** — the cookie is completely inaccessible to JavaScript, even if an XSS payload runs on the page
+- **`Secure`** — the cookie is only sent over HTTPS
+- **`SameSite=Lax`** — the cookie is not sent on cross-site POST requests, providing an additional CSRF layer
+
+An XSS attack can call your own API endpoints (the cookie is attached automatically by the browser), but it **cannot read or exfiltrate the session token value** itself.
+
+---
+
+## Reporting a Vulnerability
+
+If you discover a security issue in Himayah, please disclose it responsibly by emailing the maintainers directly rather than opening a public GitHub issue. We aim to respond within 48 hours and publish a patch within 7 days.

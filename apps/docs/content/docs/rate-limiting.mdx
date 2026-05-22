@@ -1,0 +1,272 @@
+---
+title: Rate Limiting
+description: Protect magic link and OTP endpoints from abuse using Redis, database-backed, or in-memory rate limiters.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+
+# Rate Limiting
+
+The magic link and OTP plugins include built-in rate limiting to prevent email/SMS flooding and brute-force attacks on short passcodes.
+
+---
+
+## How It Works
+
+Every time `sendVerificationToken` or `sendOTP` is called, Himayah checks a rate limiter keyed on the user's email or identifier:
+
+1. **Check**: Has this identifier exceeded `rateLimitLimit` requests within the last `rateLimitWindow` seconds?
+2. **If yes**: Reject the request with `429 Too Many Requests`
+3. **If no**: Allow the request and increment the counter
+
+The counter automatically resets after `rateLimitWindow` seconds.
+
+---
+
+## Store Options
+
+### In-Memory (Default)
+
+Out of the box, Himayah uses a process-local in-memory rate limiter.
+
+```ts
+// No extra config needed — in-memory is the default
+magicLinkPlugin({
+  sendVerificationToken: async (email, token, url) => { ... },
+  rateLimitLimit: 3,   // Max 3 requests
+  rateLimitWindow: 300, // Per 5-minute window
+})
+```
+
+<Callout type="warn">
+  **Do not use in-memory rate limiting in production** with multiple server instances or serverless deployments. Each process has its own isolated counter — a user can bypass limits by hitting different nodes. Use Redis or database rate limiting instead.
+</Callout>
+
+---
+
+### Redis Rate Limiting
+
+**Package:** `@himayah/rate-limit-redis`
+
+Stores counters in Redis with automatic TTL expiration. Works with `ioredis`, `node-redis`, and `@upstash/redis`.
+
+#### Installation
+
+```bash
+pnpm add @himayah/rate-limit-redis
+```
+
+#### Setup
+
+<Tabs items={['ioredis', 'node-redis', 'Upstash Redis']}>
+  <Tab value="ioredis">
+    ```ts title="lib/auth.ts"
+    import { createAuth } from "@himayah/core";
+    import { RedisRateLimitStore } from "@himayah/rate-limit-redis";
+    import Redis from "ioredis";
+
+    const redis = new Redis(process.env.REDIS_URL!);
+    const rateLimitStore = new RedisRateLimitStore(redis, "himayah:rl:");
+
+    export const auth = createAuth({
+      adapter,
+      sessionStore,
+      rateLimitStore, // Applied globally to all plugins that use rate limiting
+      plugins: [
+        magicLinkPlugin({ sendVerificationToken, rateLimitLimit: 3 }),
+        otpPlugin({ sendOTP, rateLimitLimit: 5 }),
+      ],
+    });
+    ```
+  </Tab>
+  <Tab value="node-redis">
+    ```ts title="lib/auth.ts"
+    import { createAuth } from "@himayah/core";
+    import { RedisRateLimitStore } from "@himayah/rate-limit-redis";
+    import { createClient } from "redis";
+
+    const redis = createClient({ url: process.env.REDIS_URL! });
+    await redis.connect();
+
+    const rateLimitStore = new RedisRateLimitStore(redis, "himayah:rl:");
+
+    export const auth = createAuth({
+      adapter,
+      sessionStore,
+      rateLimitStore,
+      plugins: [ ... ],
+    });
+    ```
+  </Tab>
+  <Tab value="Upstash Redis">
+    ```ts title="lib/auth.ts"
+    import { createAuth } from "@himayah/core";
+    import { RedisRateLimitStore } from "@himayah/rate-limit-redis";
+    import { Redis } from "@upstash/redis";
+
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL!,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    });
+
+    const rateLimitStore = new RedisRateLimitStore(redis, "himayah:rl:");
+
+    export const auth = createAuth({
+      adapter,
+      sessionStore,
+      rateLimitStore,
+      plugins: [ ... ],
+    });
+    ```
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+  `RedisRateLimitStore` automatically detects the Redis client type and uses the correct command signature. For clients that support `PX` (millisecond TTL precision), it uses `SET key value PX ms`. For others, it falls back to `EXPIRE`.
+</Callout>
+
+#### Key Prefix
+
+The second argument to `RedisRateLimitStore` is an optional key prefix. Use this to namespace your rate limit keys if you share a Redis instance across multiple apps or environments:
+
+```ts
+// Development
+new RedisRateLimitStore(redis, "dev:himayah:rl:")
+
+// Production
+new RedisRateLimitStore(redis, "prod:himayah:rl:")
+```
+
+---
+
+### Database Rate Limiting
+
+If you don't want to manage a separate Redis instance, store rate limit counters directly in your main database. This is a great choice for lower-traffic apps or when you're already paying for a hosted database.
+
+#### Schema
+
+Add a `rate_limits` table to your schema:
+
+<Tabs items={['Drizzle (PostgreSQL)', 'Drizzle (SQLite)', 'Prisma']}>
+  <Tab value="Drizzle (PostgreSQL)">
+    ```ts title="schema.ts"
+    import { pgTable, text, integer, timestamp } from "drizzle-orm/pg-core";
+
+    export const rateLimits = pgTable("rate_limits", {
+      key:       text("key").primaryKey(),
+      count:     integer("count").notNull(),
+      expiresAt: timestamp("expires_at").notNull(),
+    });
+    ```
+  </Tab>
+  <Tab value="Drizzle (SQLite)">
+    ```ts title="schema.ts"
+    import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+
+    export const rateLimits = sqliteTable("rate_limits", {
+      key:       text("key").primaryKey(),
+      count:     integer("count").notNull(),
+      expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    });
+    ```
+  </Tab>
+  <Tab value="Prisma">
+    ```prisma title="schema.prisma"
+    model RateLimit {
+      key       String   @id
+      count     Int
+      expiresAt DateTime
+
+      @@map("rate_limits")
+    }
+    ```
+  </Tab>
+</Tabs>
+
+#### Setup
+
+```ts title="lib/auth.ts"
+import { createAuth, DatabaseRateLimitStore } from "@himayah/core";
+import { drizzleAdapter } from "@himayah/adapter-drizzle";
+import { db } from "./db";
+import { users, rateLimits } from "./schema";
+
+const adapter = drizzleAdapter(db, {
+  users,
+  rateLimits, // Pass the rate limits table to the adapter
+});
+
+export const auth = createAuth({
+  adapter,
+  sessionStore,
+  rateLimitStore: new DatabaseRateLimitStore(adapter), // Uses the same DB connection
+  plugins: [
+    magicLinkPlugin({ sendVerificationToken, rateLimitLimit: 3 }),
+  ],
+});
+```
+
+<Callout type="info">
+  `DatabaseRateLimitStore` is included in `@himayah/core` — no extra package needed. Expired entries are automatically treated as non-existent and cleaned up on the next write for the same key.
+</Callout>
+
+---
+
+## Configuring Limits Per Plugin
+
+Rate limit parameters are configured per plugin, not globally:
+
+```ts
+plugins: [
+  magicLinkPlugin({
+    sendVerificationToken,
+    rateLimitLimit: 3,    // Max 3 magic link requests...
+    rateLimitWindow: 300, // ...per 5-minute window per email address
+  }),
+  otpPlugin({
+    sendOTP,
+    rateLimitLimit: 5,    // Max 5 OTP requests...
+    rateLimitWindow: 600, // ...per 10-minute window per identifier
+  }),
+]
+```
+
+The `rateLimitStore` you configure on `createAuth` is shared across all plugins that support rate limiting.
+
+---
+
+## Comparison
+
+| Feature | In-Memory | Database | Redis |
+|---|---|---|---|
+| Setup complexity | None | Minimal (one table) | Requires Redis server |
+| Works with multiple instances | ❌ | ✅ | ✅ |
+| Works on serverless/Edge | ❌ | ✅ | ✅ (Upstash) |
+| Performance | Fastest | Moderate | Fast |
+| Best for | Local development | Low-to-medium traffic | High-traffic / production |
+
+<Accordions>
+  <Accordion title="Implementing a custom rate limit store">
+    You can implement the `RateLimitStore` interface to use any storage backend:
+
+    ```ts
+    import type { RateLimitStore } from "@himayah/core";
+
+    const myStore: RateLimitStore = {
+      async get(key: string): Promise<{ count: number; expiresAt: Date } | null> {
+        // Retrieve counter for this key from your storage
+      },
+      async set(key: string, count: number, expiresAt: Date): Promise<void> {
+        // Store or update counter for this key
+      },
+    };
+
+    export const auth = createAuth({
+      rateLimitStore: myStore,
+      // ...
+    });
+    ```
+  </Accordion>
+</Accordions>

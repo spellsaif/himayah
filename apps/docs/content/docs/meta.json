@@ -1,0 +1,15 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "index",
+    "getting-started",
+    "architecture",
+    "---Plugins",
+    "plugins",
+    "---Database",
+    "adapters",
+    "rate-limiting",
+    "---Security",
+    "security-audit"
+  ]
+}

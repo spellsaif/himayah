@@ -1,0 +1,128 @@
+---
+title: Introduction
+description: Himayah is a lightweight, type-safe, schema-first, and Edge-compatible authentication framework for modern TypeScript applications.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+<p align="center">
+  <img src="/logo.png" alt="Himayah Logo" width="180" style={{ borderRadius: '20px', boxShadow: '0 10px 40px rgba(0,0,0,0.4)', marginBottom: '2rem', display: 'block', marginLeft: 'auto', marginRight: 'auto' }} />
+</p>
+
+# What is Himayah?
+
+**Himayah** (حماية — Arabic for *protection*) is a framework-agnostic, schema-first TypeScript authentication library built for the modern web. Unlike monolithic auth providers, Himayah gives you **complete ownership** over your schema, your database, and your code — while handling all cryptographic, session, and rate-limiting complexities securely.
+
+```ts
+import { createAuth } from "@himayah/core";
+import { createJWTSessionStore } from "@himayah/session";
+import { passwordPlugin } from "@himayah/plugin-password";
+import { drizzleAdapter } from "@himayah/adapter-drizzle";
+
+export const auth = createAuth({
+  adapter: drizzleAdapter(db, { users, sessions }),
+  sessionStore: createJWTSessionStore({ secret: process.env.AUTH_SECRET! }),
+  plugins: [passwordPlugin({ getPasswordHash, setPasswordHash })],
+  baseUrl: process.env.APP_URL!,
+});
+```
+
+---
+
+## Why Himayah?
+
+Most auth libraries force you into one of two traps: either you give up full control to a third-party service, or you end up with a massive dependency that does too much magic. Himayah takes a different approach.
+
+<Cards>
+  <Card title="You own the schema" description="Himayah never touches your migrations. Define your tables, map them to our thin adapters, and you're done." />
+  <Card title="Runs anywhere" description="No Node.js-only crypto or fs calls. Runs natively on Cloudflare Workers, Vercel Edge, Deno, Bun, and traditional Node." />
+  <Card title="Composable by design" description="Pick exactly the plugins you need — password, OAuth, magic link, OTP, passkeys, or organizations. No tree-shaking puzzles." />
+  <Card title="Production-hardened security" description="PBKDF2-derived AES-256-GCM JWE sessions, constant-time comparisons, double-submit CSRF, and PKCE for OAuth. Secure by default." />
+</Cards>
+
+---
+
+## Core Concepts
+
+### Session Model
+
+Himayah sessions are **stateless JWE tokens** by default. The session pipeline works in two steps:
+
+1. **PBKDF2-SHA256** stretches your `AUTH_SECRET` string into a proper 32-byte cryptographic key (100,000 iterations)
+2. **AES-256-GCM** uses that derived key to encrypt the session payload client-side inside an `HttpOnly` cookie
+
+Think of PBKDF2 as the key factory and AES-256-GCM as the vault. Both are needed — PBKDF2 *creates the key*, AES-256-GCM *uses it to encrypt*.
+
+```ts
+// Reading a session anywhere in your app
+const session = await auth.getSession(request);
+
+if (session.ok) {
+  console.log(session.data.userId);
+  console.log(session.data.activeOrgId); // if organizations are enabled
+}
+```
+
+If you need immediate session revocation (e.g., after a password change or account ban), you can opt into **stateful database sessions**:
+
+```ts
+import { createDatabaseSessionStore } from "@himayah/session";
+
+sessionStore: createDatabaseSessionStore(adapter)
+```
+
+### Plugin System
+
+Every auth method is a plugin. Plugins register their own HTTP endpoints, validate inputs, and interact with the adapter. You compose them freely:
+
+```ts
+plugins: [
+  passwordPlugin({ ... }),
+  oauthPlugin({ providers: [github, google] }),
+  magicLinkPlugin({ sendVerificationToken }),
+  organizationPlugin(),
+]
+```
+
+### Adapter Pattern
+
+Himayah defines a minimal set of database operations through the `HimayahAdapter` interface. Official adapters (Drizzle, Prisma, Kysely) implement this interface and map your existing schema tables to it.
+
+<Callout type="info">
+  You are never locked in. Because the adapter is a plain TypeScript interface, you can write a custom adapter for any database — MongoDB, Supabase, PlanetScale, etc.
+</Callout>
+
+---
+
+## Package Overview
+
+| Package | Purpose |
+|---|---|
+| `@himayah/core` | Composition engine, router, CSRF, session reading |
+| `@himayah/session` | JWE/JWS sessions, cookie utilities, stateful sessions |
+| `@himayah/adapter` | Base adapter interface and shared types |
+| `@himayah/client` | Type-safe browser API client |
+| `@himayah/plugin-password` | Email + password credentials (PBKDF2-SHA256) |
+| `@himayah/plugin-oauth` | OAuth 2.0 + OIDC with PKCE and state verification |
+| `@himayah/plugin-magic-link` | Passwordless email verification tokens |
+| `@himayah/plugin-otp` | SMS/email one-time passcodes |
+| `@himayah/plugin-passkey` | WebAuthn biometric credentials |
+| `@himayah/plugin-organization` | Multi-tenant orgs with roles and invitations |
+| `@himayah/middleware-hono` | Hono middleware adapter |
+| `@himayah/middleware-express` | Express middleware adapter |
+| `@himayah/adapter-drizzle` | Drizzle ORM adapter |
+| `@himayah/adapter-prisma` | Prisma Client adapter |
+| `@himayah/adapter-kysely` | Kysely query builder adapter |
+| `@himayah/rate-limit-redis` | Redis-backed distributed rate limiting |
+
+---
+
+## Next Steps
+
+<Cards>
+  <Card title="Getting Started →" description="Install packages, set up your schema, and have auth running in 10 minutes." href="/docs/getting-started" />
+  <Card title="Architecture →" description="Understand the session model, request lifecycle, and plugin composition." href="/docs/architecture" />
+  <Card title="Auth Plugins →" description="Explore password, OAuth, magic link, OTP, passkey, and org plugins." href="/docs/plugins" />
+  <Card title="Database Adapters →" description="Connect your Drizzle, Prisma, or Kysely schema." href="/docs/adapters" />
+</Cards>
