@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Himayah Logo" width="220" style="border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);" />
+  <img src="https://raw.githubusercontent.com/spellsaif/himayah/refs/heads/main/assets/logo.png" alt="Himayah Logo" width="220" style="border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.5);" />
 </p>
 
 <h1 align="center">Himayah (هيمية)</h1>
@@ -20,11 +20,16 @@
 
 ---
 
-## The Branding & Identity
+## Core Philosophy
 
-**Himayah** is styled around a high-end gold-and-obsidian palette. The minimalist front-facing silhouette of a girl with half-face covered represents **modesty, absolute privacy, and absolute security**—shielding your users' identities while giving you complete cryptographic ownership of your data structure and server engines.
+Authentication is a foundational security concern, but modern developer choices have been split into two undesirable options: giving up full user data ownership to third-party hosted identity platforms, or incorporating giant, monolithic frameworks that take control of your schemas, database engines, and routing cycles.
 
-Himayah is a modular, runtime-agnostic, zero-framework-dependency authentication engine for TypeScript. It relies on standard Web standard Request/Response schemas, executes cryptographically secure JWE-encrypted sessions by default, returns explicit `AuthResult` unions instead of throwing exceptions, and infers client SDK signatures from your server configuration.
+**Himayah** rejects this compromise. Built around the concept of absolute protection, our architecture rests on four core philosophies:
+
+* **Complete Schema & Data Ownership**: Himayah operates on thin database adapters. You define, migration-track, and manage your user tables, sessions, and roles. We do not touch your schemas or force hidden migrations.
+* **Modular Composition Over Monoliths**: Authentication should be a tailored puzzle, not a rigid block. You only install what you need—whether it's passwords, multi-tenant organizations, OTP, passkeys, or OAuth—without carrying tree-shaking bulk or peer-dependency locks.
+* **Hardened Security by Default**: Zero-config JSON Web Encryption (JWE) using AES-256-GCM symmetric ciphers, bitwise constant-time comparison algorithms to prevent side-channel timing attacks, and explicit no-throw `AuthResult` type unions instead of runtime exceptions.
+* **Zero Lock-In Runtime Portability**: Truly platform-agnostic, running natively anywhere Web Crypto and Web standard Request/Response objects exist—including Cloudflare Workers, Vercel Edge, Bun, Deno, and standard Node.js.
 
 ---
 
