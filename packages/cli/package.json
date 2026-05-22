@@ -1,6 +1,6 @@
 {
   "name": "@himayah/cli",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "bin": {
     "himayah": "./bin/himayah.js"
   },
