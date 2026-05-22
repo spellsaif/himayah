@@ -1,10 +1,7 @@
-import type { AuthPlugin, AuthResult, PluginContext } from "@himayah/core";
+import type { AuthPlugin, AuthResult, PluginContext, RateLimitStore } from "@himayah/core";
 import { parseCookies, serializeCookie } from "@himayah/session";
 
-export interface RateLimitStore {
-  get(key: string): Promise<{ count: number; expiresAt: number } | null>;
-  set(key: string, value: { count: number; expiresAt: number }): Promise<void>;
-}
+export type { RateLimitStore };
 
 class InMemoryRateLimitStore implements RateLimitStore {
   private cache = new Map<string, { count: number; expiresAt: number }>();
@@ -50,7 +47,6 @@ export function magicLinkPlugin(options: MagicLinkPluginOptions): AuthPlugin {
     sendVerificationToken,
     expiresIn = 900,
     successRedirect = "/",
-    rateLimitStore = new InMemoryRateLimitStore(),
     rateLimitLimit = 5,
     rateLimitWindow = 60,
   } = options;
@@ -58,6 +54,7 @@ export function magicLinkPlugin(options: MagicLinkPluginOptions): AuthPlugin {
   return {
     name: "magic-link",
     init(ctx: PluginContext) {
+      const rateLimitStore = options.rateLimitStore || ctx.rateLimitStore || new InMemoryRateLimitStore();
       const userAdapter = ctx.userAdapter;
       const verificationTokenAdapter = (ctx as any).userAdapter; // VerificationTokenAdapter typically merged with userAdapter
       const sessionStore = ctx.sessionStore;
@@ -128,8 +125,9 @@ export function magicLinkPlugin(options: MagicLinkPluginOptions): AuthPlugin {
           const reqUrl = new URL(req.url);
           // If req.url path is prefix/magic-link/send, we can construct the verify path
           // Let's make it robust
+          const origin = ctx.baseUrl || reqUrl.origin;
           const basePath = reqUrl.pathname.substring(0, reqUrl.pathname.lastIndexOf("/"));
-          const magicLinkUrl = `${reqUrl.origin}${basePath}/verify?token=${token}&email=${encodeURIComponent(input.email)}`;
+          const magicLinkUrl = `${origin}${basePath}/verify?token=${token}&email=${encodeURIComponent(input.email)}`;
 
           // Send token
           await sendVerificationToken(input.email, token, magicLinkUrl);

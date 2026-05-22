@@ -7,6 +7,8 @@ import type {
   Org,
   Member,
   Invitation,
+  RateLimit,
+  RateLimitAdapter,
   UserAdapter,
   SessionAdapter,
   OAuthAdapter,
@@ -22,6 +24,7 @@ export interface KyselyAdapterOptions {
   orgs?: string;
   members?: string;
   invitations?: string;
+  rateLimits?: string;
 }
 
 export function kyselyAdapter(
@@ -35,12 +38,14 @@ export function kyselyAdapter(
   const orgsTable = options?.orgs || "orgs";
   const membersTable = options?.members || "members";
   const invitationsTable = options?.invitations || "invitations";
+  const rateLimitsTable = options?.rateLimits || "rate_limits";
 
   const adapter: UserAdapter &
     Partial<SessionAdapter> &
     Partial<OAuthAdapter> &
     Partial<VerificationTokenAdapter> &
-    Partial<OrgAdapter> = {
+    Partial<OrgAdapter> &
+    Partial<RateLimitAdapter> = {
     async findUserByEmail(email: string): Promise<User | null> {
       const result = await db
         .selectFrom(usersTable)
@@ -317,6 +322,35 @@ export function kyselyAdapter(
         .deleteFrom(invitationsTable)
         .where("token", "=", token)
         .execute();
+    };
+  }
+
+  if (options?.rateLimits !== null) {
+    const getRateLimitInternal = async (key: string): Promise<RateLimit | null> => {
+      const result = await db
+        .selectFrom(rateLimitsTable)
+        .selectAll()
+        .where("key", "=", key)
+        .executeTakeFirst();
+      return (result as any) || null;
+    };
+
+    adapter.getRateLimit = getRateLimitInternal;
+
+    adapter.setRateLimit = async (key: string, count: number, expiresAt: Date): Promise<void> => {
+      const existing = await getRateLimitInternal(key);
+      if (existing) {
+        await db
+          .updateTable(rateLimitsTable)
+          .set({ count, expiresAt })
+          .where("key", "=", key)
+          .execute();
+      } else {
+        await db
+          .insertInto(rateLimitsTable)
+          .values({ key, count, expiresAt })
+          .execute();
+      }
     };
   }
 

@@ -6,6 +6,8 @@ import type {
   Org,
   Member,
   Invitation,
+  RateLimit,
+  RateLimitAdapter,
   UserAdapter,
   SessionAdapter,
   OAuthAdapter,
@@ -21,6 +23,7 @@ export interface PrismaAdapterOptions {
   org?: string;
   member?: string;
   invitation?: string;
+  rateLimit?: string;
 }
 
 export function prismaAdapter(
@@ -34,6 +37,7 @@ export function prismaAdapter(
   const orgModel = options?.org || "org";
   const memberModel = options?.member || "member";
   const invitationModel = options?.invitation || "invitation";
+  const rateLimitModel = options?.rateLimit || "rateLimit";
 
   const userDelegate = db[userModel];
   const sessionDelegate = db[sessionModel];
@@ -42,6 +46,7 @@ export function prismaAdapter(
   const orgDelegate = db[orgModel];
   const memberDelegate = db[memberModel];
   const invitationDelegate = db[invitationModel];
+  const rateLimitDelegate = db[rateLimitModel];
 
   if (!userDelegate) {
     throw new Error(`Prisma model delegate for "${userModel}" not found on database client.`);
@@ -51,7 +56,8 @@ export function prismaAdapter(
     Partial<SessionAdapter> &
     Partial<OAuthAdapter> &
     Partial<VerificationTokenAdapter> &
-    Partial<OrgAdapter> = {
+    Partial<OrgAdapter> &
+    Partial<RateLimitAdapter> = {
     async findUserByEmail(email: string): Promise<User | null> {
       return await userDelegate.findUnique({
         where: { email }
@@ -292,6 +298,22 @@ export function prismaAdapter(
     adapter.deleteInvitation = async (token: string): Promise<void> => {
       await invitationDelegate.delete({
         where: { token }
+      });
+    };
+  }
+
+  if (rateLimitDelegate) {
+    adapter.getRateLimit = async (key: string): Promise<RateLimit | null> => {
+      return await rateLimitDelegate.findUnique({
+        where: { key }
+      });
+    };
+
+    adapter.setRateLimit = async (key: string, count: number, expiresAt: Date): Promise<void> => {
+      await rateLimitDelegate.upsert({
+        where: { key },
+        update: { count, expiresAt },
+        create: { key, count, expiresAt }
       });
     };
   }

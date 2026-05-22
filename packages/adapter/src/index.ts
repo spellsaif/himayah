@@ -97,3 +97,14 @@ export interface OrgAdapter {
   findInvitation(token: string): Promise<Invitation | null>;
   deleteInvitation(token: string): Promise<void>;
 }
+
+export interface RateLimit {
+  key: string;
+  count: number;
+  expiresAt: Date;
+}
+
+export interface RateLimitAdapter {
+  getRateLimit(key: string): Promise<RateLimit | null>;
+  setRateLimit(key: string, count: number, expiresAt: Date): Promise<void>;
+}

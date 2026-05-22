@@ -1,9 +1,6 @@
-import type { AuthPlugin, AuthResult, PluginContext } from "@himayah/core";
+import type { AuthPlugin, AuthResult, PluginContext, RateLimitStore } from "@himayah/core";
 
-export interface RateLimitStore {
-  get(key: string): Promise<{ count: number; expiresAt: number } | null>;
-  set(key: string, value: { count: number; expiresAt: number }): Promise<void>;
-}
+export type { RateLimitStore };
 
 class InMemoryRateLimitStore implements RateLimitStore {
   private cache = new Map<string, { count: number; expiresAt: number }>();
@@ -47,7 +44,6 @@ export function otpPlugin(options: OTPPluginOptions): AuthPlugin {
     sendOTP,
     otpLength = 6,
     expiresIn = 300,
-    rateLimitStore = new InMemoryRateLimitStore(),
     rateLimitLimit = 5,
     rateLimitWindow = 60,
   } = options;
@@ -55,6 +51,7 @@ export function otpPlugin(options: OTPPluginOptions): AuthPlugin {
   return {
     name: "otp",
     init(ctx: PluginContext) {
+      const rateLimitStore = options.rateLimitStore || ctx.rateLimitStore || new InMemoryRateLimitStore();
       const userAdapter = ctx.userAdapter;
       const verificationTokenAdapter = (ctx as any).userAdapter;
       const sessionStore = ctx.sessionStore;

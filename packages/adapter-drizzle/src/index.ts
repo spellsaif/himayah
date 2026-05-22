@@ -7,6 +7,8 @@ import type {
   Org,
   Member,
   Invitation,
+  RateLimit,
+  RateLimitAdapter,
   UserAdapter,
   SessionAdapter,
   OAuthAdapter,
@@ -24,15 +26,17 @@ export function drizzleAdapter(
     orgs?: any;
     members?: any;
     invitations?: any;
+    rateLimits?: any;
   }
 ) {
-  const { users, sessions, accounts, verificationTokens, orgs, members, invitations } = schemas;
+  const { users, sessions, accounts, verificationTokens, orgs, members, invitations, rateLimits } = schemas;
 
   const adapter: UserAdapter &
     Partial<SessionAdapter> &
     Partial<OAuthAdapter> &
     Partial<VerificationTokenAdapter> &
-    Partial<OrgAdapter> = {
+    Partial<OrgAdapter> &
+    Partial<RateLimitAdapter> = {
     async findUserByEmail(email: string): Promise<User | null> {
       const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
       return result[0] || null;
@@ -274,5 +278,24 @@ export function drizzleAdapter(
     };
   }
 
+  if (rateLimits) {
+    adapter.getRateLimit = async (key: string): Promise<RateLimit | null> => {
+      const result = await db.select().from(rateLimits).where(eq(rateLimits.key, key)).limit(1);
+      return result[0] || null;
+    };
+
+    adapter.setRateLimit = async (key: string, count: number, expiresAt: Date): Promise<void> => {
+      const existing = await db.select().from(rateLimits).where(eq(rateLimits.key, key)).limit(1);
+      if (existing[0]) {
+        await db.update(rateLimits).set({ count, expiresAt }).where(eq(rateLimits.key, key));
+      } else {
+        await db.insert(rateLimits).values({ key, count, expiresAt });
+      }
+    };
+  }
+
   return adapter;
 }
+
+export * from "./schemas";
+
