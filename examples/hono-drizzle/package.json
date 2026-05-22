@@ -1,0 +1,31 @@
+{
+  "name": "example-hono-drizzle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@himayah/adapter": "workspace:*",
+    "@himayah/adapter-drizzle": "workspace:*",
+    "@himayah/core": "workspace:*",
+    "@himayah/middleware-hono": "workspace:*",
+    "@himayah/plugin-magic-link": "workspace:*",
+    "@himayah/plugin-organization": "workspace:*",
+    "@himayah/plugin-otp": "workspace:*",
+    "@himayah/plugin-password": "workspace:*",
+    "@himayah/session": "workspace:*",
+    "better-sqlite3": "^11.3.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.0.0",
+    "@hono/node-server": "^1.10.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.9",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.5"
+  }
+}

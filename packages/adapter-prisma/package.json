@@ -1,0 +1,19 @@
+{
+  "name": "@himayah/adapter-prisma",
+  "version": "0.1.1",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@prisma/client": "^5.0.0 || ^6.0.0"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.0.0"
+  },
+  "dependencies": {
+    "@himayah/adapter": "workspace:*"
+  }
+}

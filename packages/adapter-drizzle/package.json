@@ -1,0 +1,16 @@
+{
+  "name": "@himayah/adapter-drizzle",
+  "version": "0.1.1",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@himayah/adapter": "workspace:*"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "^0.30.0"
+  }
+}
