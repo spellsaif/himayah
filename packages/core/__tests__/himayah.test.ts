@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
-import { createAuth } from "../src/index.js";
-import { createJWTSessionStore } from "../../session/src/index.js";
+import { createAuth, timingSafeEqual, DatabaseRateLimitStore } from "../src/index.js";
+import { createJWTSessionStore, createDatabaseSessionStore } from "../../session/src/index.js";
 import { passwordPlugin } from "../../plugin-password/src/index.js";
 import { magicLinkPlugin } from "../../plugin-magic-link/src/index.js";
 import { otpPlugin } from "../../plugin-otp/src/index.js";
 import { organizationPlugin } from "../../plugin-organization/src/index.js";
 import { createClient } from "../../client/src/index.js";
+import { RedisRateLimitStore } from "../../rate-limit-redis/src/index.js";
 
 describe("Himayah Authentication Monorepo integration", () => {
   const secret = "super-secret-key-must-be-long-32-chars!!";
@@ -444,5 +445,152 @@ describe("Himayah Authentication Monorepo integration", () => {
     );
 
     vi.unstubAllGlobals();
+  });
+
+  describe("Security Enhancements (Phase 2)", () => {
+    it("should compare strings in constant time using timingSafeEqual", () => {
+      expect(timingSafeEqual("hello", "hello")).toBe(true);
+      expect(timingSafeEqual("hello", "world")).toBe(false);
+      expect(timingSafeEqual("hello", "helloo")).toBe(false);
+      expect(timingSafeEqual("hello", "")).toBe(false);
+      expect(timingSafeEqual("", "")).toBe(true);
+      expect(timingSafeEqual(null as any, "hello")).toBe(false);
+      expect(timingSafeEqual("hello", undefined as any)).toBe(false);
+    });
+
+    it("should handle stateful session store using createDatabaseSessionStore", async () => {
+      const mockSessions: any[] = [];
+      const sessionAdapterMock = {
+        async createSession(data: { userId: string; token: string; expiresAt: Date }) {
+          const s = { id: Math.random().toString(), ...data, createdAt: new Date() };
+          mockSessions.push(s);
+          return s;
+        },
+        async findSession(token: string) {
+          return mockSessions.find((s) => s.token === token) || null;
+        },
+        async deleteSession(token: string) {
+          const idx = mockSessions.findIndex((s) => s.token === token);
+          if (idx !== -1) mockSessions.splice(idx, 1);
+        },
+        async deleteUserSessions(userId: string) {
+          let idx = mockSessions.findIndex((s) => s.userId === userId);
+          while (idx !== -1) {
+            mockSessions.splice(idx, 1);
+            idx = mockSessions.findIndex((s) => s.userId === userId);
+          }
+        }
+      };
+
+      const userAdapterMock = {
+        async findUserById(id: string) {
+          return mockUsersTable.find((u) => u.id === id) || null;
+        },
+        async findUserByEmail(email: string) {
+          return mockUsersTable.find((u) => u.email === email) || null;
+        },
+        async createUser(data: any) {
+          return mockAdapter.createUser(data);
+        },
+        async updateUser(id: string, data: any) {
+          return mockAdapter.updateUser(id, data);
+        }
+      };
+
+      const dbSessionStore = createDatabaseSessionStore({
+        sessionAdapter: sessionAdapterMock,
+        userAdapter: userAdapterMock,
+        maxAge: 60 // 60 seconds
+      });
+
+      // 1. Create user
+      const user = await userAdapterMock.createUser({ email: "stateful@example.com" });
+
+      // 2. Create session
+      const token = await dbSessionStore.create({ userId: user.id });
+      expect(token).toBeDefined();
+      expect(mockSessions.length).toBe(1);
+      expect(mockSessions[0].userId).toBe(user.id);
+
+      // 3. Verify session
+      const verified = await dbSessionStore.verify(token);
+      expect(verified).not.toBeNull();
+      expect(verified?.userId).toBe(user.id);
+      expect(verified?.user.email).toBe("stateful@example.com");
+
+      // 4. Delete session (revocation)
+      await sessionAdapterMock.deleteSession(token);
+      const verifiedAfterDelete = await dbSessionStore.verify(token);
+      expect(verifiedAfterDelete).toBeNull();
+    });
+
+    it("should handle DatabaseRateLimitStore using RateLimitAdapter", async () => {
+      const mockRateLimits = new Map<string, { key: string; count: number; expiresAt: Date }>();
+      const rateLimitAdapterMock = {
+        async getRateLimit(key: string) {
+          return mockRateLimits.get(key) || null;
+        },
+        async setRateLimit(key: string, count: number, expiresAt: Date) {
+          mockRateLimits.set(key, { key, count, expiresAt });
+        }
+      };
+
+      const dbRateLimitStore = new DatabaseRateLimitStore(rateLimitAdapterMock);
+
+      // 1. Get non-existent
+      const record = await dbRateLimitStore.get("test-key");
+      expect(record).toBeNull();
+
+      // 2. Set record
+      const expiresAt = Date.now() + 5000;
+      await dbRateLimitStore.set("test-key", { count: 3, expiresAt });
+
+      const retrieved = await dbRateLimitStore.get("test-key");
+      expect(retrieved).not.toBeNull();
+      expect(retrieved?.count).toBe(3);
+      expect(retrieved?.expiresAt).toBe(expiresAt);
+
+      // 3. Expiry handling
+      const expiredTime = Date.now() - 1000;
+      await dbRateLimitStore.set("expired-key", { count: 1, expiresAt: expiredTime });
+      const expiredRetrieved = await dbRateLimitStore.get("expired-key");
+      expect(expiredRetrieved).toBeNull();
+    });
+
+    it("should handle RedisRateLimitStore with a mocked Redis client", async () => {
+      const mockRedisStore = new Map<string, string>();
+      const mockRedisClient = {
+        async get(key: string) {
+          return mockRedisStore.get(key) || null;
+        },
+        async set(key: string, value: string, ...args: any[]) {
+          mockRedisStore.set(key, value);
+        }
+      };
+
+      const redisStore = new RedisRateLimitStore(mockRedisClient, "test-prefix:");
+
+      // 1. Get non-existent
+      const record = await redisStore.get("my-key");
+      expect(record).toBeNull();
+
+      // 2. Set key
+      const expiresAt = Date.now() + 10000;
+      await redisStore.set("my-key", { count: 5, expiresAt });
+
+      const retrieved = await redisStore.get("my-key");
+      expect(retrieved).not.toBeNull();
+      expect(retrieved?.count).toBe(5);
+      expect(retrieved?.expiresAt).toBe(expiresAt);
+
+      // Verify prefix prefixing
+      expect(mockRedisStore.has("test-prefix:my-key")).toBe(true);
+
+      // 3. Expired record
+      const expiredTime = Date.now() - 5000;
+      await redisStore.set("expired-key", { count: 2, expiresAt: expiredTime });
+      const expiredRetrieved = await redisStore.get("expired-key");
+      expect(expiredRetrieved).toBeNull();
+    });
   });
 });
