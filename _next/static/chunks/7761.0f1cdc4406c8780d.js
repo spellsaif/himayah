@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[7761],{87761:function(t,e,a){async function n(t,e,a,n){let r=new URLSearchParams;r.set("query",t),e&&r.set("locale",e),a&&r.set("tag",a);let c=await fetch(`${n.api??"/api/search"}?${r.toString()}`);if(!c.ok)throw Error(await c.text());return await c.json()}a.d(e,{fetchDocs:function(){return n}}),a(8444)}}]);
