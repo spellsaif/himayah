@@ -1,4 +1,5 @@
 import type { AuthPlugin, AuthResult } from "@himayah/core";
+import { timingSafeEqual } from "@himayah/core";
 
 // Helper: base64url encode a Uint8Array
 function uint8ArrayToBase64Url(arr: Uint8Array): string {
@@ -80,7 +81,7 @@ async function verifyPassword(hash: string, password: string): Promise<boolean> 
   );
 
   const currentHash = uint8ArrayToBase64Url(new Uint8Array(derivedBits));
-  return currentHash === originalHash;
+  return timingSafeEqual(currentHash, originalHash);
 }
 
 export interface PasswordPluginOptions {

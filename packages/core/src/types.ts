@@ -16,6 +16,11 @@ export type AuthResult<T> =
   | { ok: true; data: T; error?: never }
   | { ok: false; error: AuthError; data?: never };
 
+export interface RateLimitStore {
+  get(key: string): Promise<{ count: number; expiresAt: number } | null>;
+  set(key: string, value: { count: number; expiresAt: number }): Promise<void>;
+}
+
 export interface PluginContext {
   userAdapter?: any;
   sessionAdapter?: any;
@@ -23,6 +28,8 @@ export interface PluginContext {
   sessionStore: SessionStore;
   cookieName?: string;
   cookieOptions?: any;
+  baseUrl?: string;
+  rateLimitStore?: RateLimitStore;
 }
 
 export interface AuthPlugin {

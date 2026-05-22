@@ -1,4 +1,5 @@
 import type { AuthPlugin, AuthResult, PluginContext } from "@himayah/core";
+import { timingSafeEqual } from "@himayah/core";
 import { parseCookies, serializeCookie } from "@himayah/session";
 
 export interface OAuthProvider {
@@ -94,8 +95,9 @@ export function oauthPlugin(options: OAuthPluginOptions): AuthPlugin {
         const challenge = await sha256Base64Url(verifier);
 
         const reqUrl = new URL(req.url);
-        // Build dynamic callback URL matching the server routes setup
-        const callbackUrl = `${reqUrl.origin}${reqUrl.pathname}/callback`;
+        const origin = ctx.baseUrl || reqUrl.origin;
+        // Build callback URL using safe origin
+        const callbackUrl = `${origin}${reqUrl.pathname}/callback`;
 
         const authUrl = new URL(provider.authorizationEndpoint);
         authUrl.searchParams.set("client_id", provider.clientId);
@@ -158,12 +160,13 @@ export function oauthPlugin(options: OAuthPluginOptions): AuthPlugin {
           const storedState = cookies[`himayah.oauth.${providerId}.state`];
           const storedVerifier = cookies[`himayah.oauth.${providerId}.verifier`];
 
-          if (!storedState || storedState !== state || !storedVerifier) {
+          if (!storedState || !timingSafeEqual(storedState, state) || !storedVerifier) {
             return new Response("State mismatch or missing verifier cookie", { status: 400 });
           }
 
           // Build token request
-          const callbackUrl = `${reqUrl.origin}${reqUrl.pathname}`;
+          const origin = ctx.baseUrl || reqUrl.origin;
+          const callbackUrl = `${origin}${reqUrl.pathname}`;
           const tokenBody = new URLSearchParams({
             client_id: provider.clientId,
             client_secret: provider.clientSecret,

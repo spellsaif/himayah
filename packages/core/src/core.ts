@@ -1,7 +1,8 @@
 import type { UserAdapter, SessionAdapter, OAuthAdapter } from "@himayah/adapter";
 import type { SessionStore } from "@himayah/session";
 import { serializeCookie, parseCookies } from "@himayah/session";
-import type { AuthPlugin, PluginContext, AuthResult, SessionData } from "./types.js";
+import type { AuthPlugin, PluginContext, AuthResult, SessionData, RateLimitStore } from "./types.js";
+import { timingSafeEqual } from "./timing.js";
 
 export interface CreateAuthConfig {
   adapter?: UserAdapter & Partial<SessionAdapter> & Partial<OAuthAdapter>;
@@ -19,6 +20,8 @@ export interface CreateAuthConfig {
     cookieName?: string;
     headerName?: string;
   };
+  baseUrl?: string;
+  rateLimitStore?: RateLimitStore;
 }
 
 // Simple path matcher supporting dynamic parameters like :providerId
@@ -65,7 +68,9 @@ export function createAuth(config: CreateAuthConfig) {
     oauthAdapter: adapter,
     sessionStore,
     cookieName,
-    cookieOptions
+    cookieOptions,
+    baseUrl: config.baseUrl,
+    rateLimitStore: config.rateLimitStore
   };
 
   const handlers: Record<string, Record<string, Function>> = {};
@@ -183,7 +188,7 @@ export function createAuth(config: CreateAuthConfig) {
       const csrfCookie = cookies[csrfCookieName];
       const csrfHeader = req.headers.get(csrfHeaderName) || req.headers.get(csrfHeaderName.toLowerCase());
 
-      if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+      if (!csrfCookie || !csrfHeader || !timingSafeEqual(csrfCookie, csrfHeader)) {
         return new Response(
           JSON.stringify({
             ok: false,
