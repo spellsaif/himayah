@@ -4,13 +4,13 @@ export const baseOptions: BaseLayoutProps = {
   nav: {
     title: (
       <span className="flex items-center gap-2 font-bold text-base">
-        <img src="/logo.png" alt="Himayah Logo" className="w-6 h-6 object-contain rounded-md" />
+        <img src="/himayah/logo.png" alt="Himayah Logo" className="w-6 h-6 object-contain rounded-md" />
         <span>Himayah</span>
       </span>
     ),
     url: '/',
   },
-  githubUrl: 'https://github.com',
+  githubUrl: 'https://github.com/spellsaif/himayah',
   links: [
     {
       text: 'Docs',

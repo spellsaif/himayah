@@ -4,6 +4,11 @@ import { createMDX } from 'fumadocs-mdx/next';
 const config = {
   reactStrictMode: true,
   optimizeFonts: false,
+  output: 'export',
+  images: {
+    unoptimized: true,
+  },
+  basePath: '/himayah',
 };
 
 const withMDX = createMDX();

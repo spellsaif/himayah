@@ -1,10 +1,5 @@
 import './global.css';
-import { Inter } from 'next/font/google';
 import { RootProvider } from 'fumadocs-ui/provider';
-
-const inter = Inter({
-  subsets: ['latin'],
-});
 
 export const metadata = {
   title: {
@@ -16,8 +11,8 @@ export const metadata = {
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={inter.className} suppressHydrationWarning>
-      <body className="flex flex-col min-h-screen">
+    <html lang="en" className="antialiased" suppressHydrationWarning>
+      <body className="flex flex-col min-h-screen font-sans">
         <RootProvider>{children}</RootProvider>
       </body>
     </html>

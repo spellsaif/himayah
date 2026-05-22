@@ -13,8 +13,9 @@
 </p>
 
 <p align="center">
-  <a href="#visual-architecture--cryptographic-lifecycles">View Architecture</a> •
-  <a href="https://github.com">Documentation Site</a> •
+  <a href="#high-level-architecture">View Architecture</a> •
+  <a href="https://spellsaif.github.io/himayah">Documentation Site</a> •
+  <a href="https://github.com/spellsaif/himayah">GitHub Repository</a> •
   <a href="#server-quickstart">Quickstart</a>
 </p>
 
@@ -70,175 +71,53 @@ Authentication is a foundational security concern, but modern developer choices 
 
 ---
 
-## Visual Architecture & Cryptographic Lifecycles
+## High-Level Architecture
 
-Himayah is built for total clarity. Here are the core structures that run your secure application under the hood:
-
-### 1. Monorepo Topology & Relationships
-This layout outlines how Himayah encapsulates concerns: Core sets up the engine context, adapters bridge the database tables, and framework middlewares capture the incoming requests:
+Himayah is designed to be highly modular, lightweight, and framework-agnostic. Below is a simplified, high-level overview of how requests flow from the client, through framework-specific middleware, into Himayah's core cryptographic engine, and ultimately map to your database tables:
 
 ```mermaid
 graph TD
-    subgraph Core ["Core Cryptographic Hub"]
-        CoreLib["@himayah/core"]
-        Session["@himayah/session"]
-        Adapter["@himayah/adapter"]
-        CoreLib --> Session
-        CoreLib --> Adapter
-    end
-
-    subgraph Plugins ["Modular Feature Plugins"]
-        Pw["@himayah/plugin-password"]
-        Oauth["@himayah/plugin-oauth"]
-        Magic["@himayah/plugin-magic-link"]
-        Otp["@himayah/plugin-otp"]
-        Passkey["@himayah/plugin-passkey"]
-        Org["@himayah/plugin-organization"]
+    Client["Client App / Browser<br>(@himayah/client)"]
+    
+    subgraph Server ["Your Server / Edge Runtime (Next.js, Hono, Express, SvelteKit...)"]
+        Middleware["Framework Middleware / Route Handler"]
         
-        Pw --> Adapter
-        Oauth --> Adapter
-        Magic --> Adapter
-        Otp --> Adapter
-        Passkey --> Adapter
-        Org --> Adapter
-    end
-
-    subgraph Middlewares ["Runtime Framework Adapters"]
-        Hono["@himayah/middleware-hono"]
-        Express["@himayah/middleware-express"]
-        Next["@himayah/next"]
+        subgraph HimayahCore ["@himayah/core Hub"]
+            CSRF["Double-Submit CSRF Check"]
+            Router["Internal Endpoint Router"]
+            SessionStore["Session Manager<br>(JWE AES-256-GCM Stateless/Stateful)"]
+        end
         
-        Hono --> CoreLib
-        Express --> CoreLib
-        Next --> CoreLib
-    end
-
-    subgraph DB ["Concrete Database Adapters"]
-        Drizzle["@himayah/adapter-drizzle"]
-        Prisma["@himayah/adapter-prisma"]
-        Kysely["@himayah/adapter-kysely"]
+        subgraph Plugins ["Modular Feature Plugins"]
+            Password["@himayah/plugin-password"]
+            OAuth["@himayah/plugin-oauth"]
+            Passkey["@himayah/plugin-passkey"]
+            Org["@himayah/plugin-organization"]
+        end
         
-        Drizzle --> Adapter
-        Prisma --> Adapter
-        Kysely --> Adapter
-    end
-
-    style CoreLib fill:#111,stroke:#d9a752,stroke-width:2px,color:#fff
-    style Session fill:#1e1b18,stroke:#d9a752,stroke-width:1px,color:#fff
-    style Adapter fill:#1e1b18,stroke:#d9a752,stroke-width:1px,color:#fff
-    
-    style Pw fill:#15151b,stroke:#a1a1aa,stroke-width:1px,color:#d1d1d6
-    style Oauth fill:#15151b,stroke:#a1a1aa,stroke-width:1px,color:#d1d1d6
-    style Magic fill:#15151b,stroke:#a1a1aa,stroke-width:1px,color:#d1d1d6
-    style Otp fill:#15151b,stroke:#a1a1aa,stroke-width:1px,color:#d1d1d6
-    style Passkey fill:#15151b,stroke:#a1a1aa,stroke-width:1px,color:#d1d1d6
-    style Org fill:#15151b,stroke:#a1a1aa,stroke-width:1px,color:#d1d1d6
-    
-    style Hono fill:#0e1713,stroke:#10b981,stroke-width:1px,color:#a7f3d0
-    style Express fill:#1c1917,stroke:#a8a29e,stroke-width:1px,color:#f5f5f4
-    style Next fill:#0a0a0a,stroke:#e2e8f0,stroke-width:1px,color:#f8fafc
-    
-    style Drizzle fill:#181008,stroke:#f59e0b,stroke-width:1px,color:#fef3c7
-    style Prisma fill:#0f172a,stroke:#3b82f6,stroke-width:1px,color:#dbeafe
-    style Kysely fill:#061512,stroke:#0d9488,stroke-width:1px,color:#ccfbf1
-```
-
-### 2. Request Execution Pipeline
-Incoming requests undergo double-submit CSRF checks (on POST/PUT/DELETE methods) before being routed to specific pluggable endpoint actions:
-
-```mermaid
-graph TD
-    A["Incoming HTTP Request"] --> B{"Is mutating method?<br>(POST/PUT/DELETE)"}
-    B -- Yes --> C["CSRF Verification<br>(timingSafeEqual Cookie == Header)"]
-    B -- No --> D["Cookie Parsing & Session Loading"]
-    C --> D
-    D --> E["Route Matching (Hono-style Router)"]
-    E --> F["Plugin Handler Execution (Password/OAuth/OTP...)"]
-    F --> G["Session State Update"]
-    G --> H["Standard Web Response (Set-Cookie)"]
-    
-    style A fill:#0B0B0F,stroke:#d9a752,stroke-width:2px,color:#fff
-    style C fill:#1e1b18,stroke:#d9a752,stroke-width:1px,color:#fff
-    style F fill:#1e1b18,stroke:#d9a752,stroke-width:1px,color:#fff
-    style H fill:#0B0B0F,stroke:#d9a752,stroke-width:2px,color:#fff
-```
-
-### 3. JWE Cryptographic Key Derivation Flow
-If the provided `AUTH_SECRET` is not a raw 32-byte hex/base64 key, PBKDF2 stretching deriving occurs natively inside Web Crypto. Otherwise, direct Web Crypto imports take over to decrypt or encrypt the GCM ciphertext:
-
-```mermaid
-graph LR
-    subgraph "Key Derivation Pipeline"
-        A["AUTH_SECRET String"] --> B{"Is exactly 32-bytes?"}
-        B -- No --> C["PBKDF2-SHA256 Stretching<br>(100,000 Iterations)"]
-        C --> D["Derived Cryptographic Key"]
-        B -- Yes --> E["Direct Web Crypto Import<br>(Bypasses PBKDF2)"]
-        E --> D
-    end
-
-    subgraph "Session Encryption"
-        F["Session Payload<br>{ userId, activeOrgId, exp }"] --> G["AES-256-GCM Encryption"]
-        D --> G
-        G --> H["Stateless JWE Token<br>(HttpOnly Cookie)"]
-    end
-
-    style A fill:#1e1b18,stroke:#d9a752,stroke-width:1px,color:#fff
-    style D fill:#1e1b18,stroke:#d9a752,stroke-width:1px,color:#fff
-    style H fill:#0B0B0F,stroke:#d9a752,stroke-width:2px,color:#fff
-```
-
-### 4. Stateful Session Revocation Check
-When opted into database session tracking, validation flows compare standard JWE cookie tokens against immediate `sessions` records to intercept revoked keys:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Client Browser
-    participant Core as Himayah Core Engine
-    participant DB as Database Session Table
-
-    User->>Core: Request with himayah.sid cookie
-    Note over Core: JWE decrypted & validated (signature, expiry)
-    alt Session is Stateless
-        Core-->>User: Authorized (200 OK)
-    else Session is Stateful
-        Core->>DB: Query session ID in database
-        alt Session exists and is active
-            DB-->>Core: Active Session Record
-            Core-->>User: Authorized (200 OK)
-        else Session is revoked or deleted
-            DB-->>Core: Not Found / Expired
-            Note over Core: Clear cookie from headers
-            Core-->>User: Unauthorized (401 Error)
+        subgraph DB ["Your Database"]
+            Adapter["Thin DB Adapter<br>(Drizzle, Prisma, Kysely)"]
+            Tables["Your Tables<br>(users, sessions, passwords...)"]
         end
     end
-```
 
-### 5. Double-Submit CSRF Lifecycle
-A secure random token is established in non-`HttpOnly` cookies, which is subsequently read by the client and included in custom payload headers, and verified in timing-safe comparisons on mutating endpoints:
+    Client -->|1. HTTP Request| Middleware
+    Middleware -->|2. Validate Request| CSRF
+    CSRF -->|3. Route Path| Router
+    Router -->|4. Execute Action| Password
+    Router -->|4. Execute Action| OAuth
+    Router -->|4. Execute Action| Passkey
+    Router -->|4. Execute Action| Org
+    
+    Password & OAuth & Passkey & Org -->|5. DB Operations| Adapter
+    Adapter -->|6. SQL / Queries| Tables
+    
+    SessionStore -.->|7. Decrypt / Encrypt Cookie| Client
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as Client App (Browser / SDK)
-    participant Core as Himayah Core Engine
-    participant Cookies as Browser Cookie Jar
-
-    Note over Client, Core: Safe Request (e.g. GET /api/auth/session)
-    Client->>Core: GET request
-    Core->>Cookies: Set-Cookie: himayah.csrf=<token> (HttpOnly: false)
-    Core-->>Client: Return Session JSON / Status
-
-    Note over Client, Core: State-Mutating Request (e.g. POST /api/auth/password/sign-in)
-    Client->>Cookies: Read himayah.csrf cookie value
-    Client->>Core: POST request with X-CSRF-Token: <token> & Cookie: himayah.csrf=<token>
-    Note over Core: timingSafeEqual(Header Token, Cookie Token)
-    alt Tokens Match
-        Core->>Core: Process Endpoint Handler
-        Core-->>Client: HTTP 200 OK with session
-    else Tokens Mismatch
-        Core-->>Client: HTTP 403 Forbidden (CSRF validation failed)
-    end
+    style Server fill:#0B0B0F,stroke:#d9a752,stroke-width:2px,color:#fff
+    style HimayahCore fill:#1a191d,stroke:#d9a752,stroke-width:1px,color:#fff
+    style Plugins fill:#15151b,stroke:#a1a1aa,stroke-width:1px,color:#d1d1d6
+    style DB fill:#14110f,stroke:#e0a96d,stroke-width:1px,color:#fef3c7
 ```
 
 ---

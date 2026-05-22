@@ -16,3 +16,7 @@ pnpm-debug.log*
 coverage
 .next
 *.tsbuildinfo
+
+# static export build directory
+out
+apps/docs/out
